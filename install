@@ -61,7 +61,7 @@ if args.libdeflate is None:
     p = Popen(['git', 'clone', 'https://github.com/ebiggers/libdeflate'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     output, err = p.communicate()
     if p.returncode != 0:
-        raise SystemExit("Error cloning libdeflate: " + err)
+        raise SystemExit("Error cloning libdeflate: " + err.decode('utf-8'))
 
     if not os.path.exists("libdeflate"):
         raise SystemExit("Error, libdeflate directory does not exist")
@@ -76,7 +76,7 @@ if args.libdeflate is None:
     p = Popen(['make', 'libdeflate.a'], stdin=PIPE, stdout=PIPE, stderr=PIPE, env=env)
     output, err = p.communicate()
     if p.returncode != 0:
-        raise SystemExit("Error making libdeflate.a: " + err)
+        raise SystemExit("Error making libdeflate.a: " + err.decode('utf-8'))
 
     if not os.path.exists("libdeflate.a"):
         raise SystemExit("Error, could not find libdeflate.a")
@@ -97,7 +97,7 @@ command = args.compiler + " PretextMap.cpp " + args.libdeflate + " " + args.flag
 p = Popen(command.strip().split(), stdin=PIPE, stdout=PIPE, stderr=PIPE)
 output, err = p.communicate()
 if p.returncode != 0:
-    raise SystemExit("Error making PretextMap: " + err)
+    raise SystemExit("Error making PretextMap: " + err.decode('utf-8'))
 else:
     print("Done")
 
