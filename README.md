@@ -21,7 +21,7 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 example: samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descent --mapq 10<br/>
 
 # Map Format
-Contact maps are saved in a compressed texture format (hence the name). Maps can be read by PretextView. Expect pretext map files to take around 30 to 50 M of disk space each.
+Contact maps are saved in a compressed texture format (hence the name). Maps can be read by PretextView (https://github.com/wtsi-hpag/PretextView). Expect pretext map files to take around 30 to 50 M of disk space each.
 
 # Requirments, running
 3G of RAM and 2 CPU cores
