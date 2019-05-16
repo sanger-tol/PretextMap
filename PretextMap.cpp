@@ -311,7 +311,9 @@ global_variable
 mutex
 Working_Set_rwMutex;
 
-#define Min_Map_Quality 10
+global_variable
+u32
+Min_Map_Quality = 10;
 
 #define Max_Image_Depth 15
 #define Min_Image_Depth 10
@@ -738,18 +740,18 @@ FinishProcessingHeader()
         printf("Mapping to %d contigs, ", Number_of_Contigs);
         if (Sort_By == noSort)
         {
-            printf("unsorted\n");
+            printf("unsorted");
         }
         else if (Sort_By == sortByLength)
         {
             printf("sorted by length, ");
             if (Sort_Order == descend)
             {
-                printf("descending\n");
+                printf("descending");
             }
             else
             {
-                printf("ascending\n");
+                printf("ascending");
             }
         }
         else
@@ -757,13 +759,14 @@ FinishProcessingHeader()
             printf("sorted by name, ");
             if (Sort_Order == descend)
             {
-                printf("descending\n");
+                printf("descending");
             }
             else
             {
-                printf("ascending\n");
+                printf("ascending");
             }
         }
+        printf(". Filtering by minimum mapping quality %d\n", Min_Map_Quality);
     }
 }
 
@@ -1554,7 +1557,7 @@ MainArgs
 {
     if (ArgCount == 1)
     {
-        printf("(...samformat |) PretextMap -o output.pretex (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend)) (< samfile)");
+        printf("(...samformat |) PretextMap -o output.pretex (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend) --mapq {10}) (< samfile)");
         exit(0);
     }
     
@@ -1584,6 +1587,11 @@ MainArgs
             {
                 Sort_By = noSort;
             }
+            else
+            {
+                fprintf(stderr, "Invalid option for sortby: %s\n", ArgBuffer[index]);
+                exit(1);
+            }
         }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--sortorder"))
         {
@@ -1595,6 +1603,25 @@ MainArgs
             else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"descend"))
             {
                 Sort_Order = descend;
+            }
+            else
+            {
+                fprintf(stderr, "Invalid option for sortorder: %s\n", ArgBuffer[index]);
+                exit(1);
+            }
+        }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--mapq"))
+        {
+            ++index;
+            u32 mapq;
+            if (StringToInt_Check((u08 *)ArgBuffer[index], &mapq))
+            {
+                Min_Map_Quality = mapq;
+            }
+            else
+            {
+                fprintf(stderr, "Invalid option for mapq, not a non-negative int: %s\n", ArgBuffer[index]);
+                exit(1);
             }
         }
     }
