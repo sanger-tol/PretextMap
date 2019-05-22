@@ -40,7 +40,7 @@ clang or gcc to compile<br/>
 Tested on Ubuntu linux kernel 3.13 with clang-9, gcc-4.9, gcc-5.5, gcc-8.3<br/>
 Tested on MacOS 10.13.6 with clang-9, clang-10-apple<br/>
 
-PretextMap requires libdeflate (https://github.com/ebiggers/libdeflate). By default the install script will clone and build the libdeflate.a static library for compilation with PretextMap. You can specify your own version to the install script if you wish (you'll have to specify appropriate liking flags as well if you specify a shared library).  
+PretextMap requires libdeflate (https://github.com/ebiggers/libdeflate). By default the install script will clone and build the libdeflate.a static library for compilation with PretextMap. You can specify your own version to the install script if you wish (you'll have to specify appropriate linking flags as well if you specify a shared library).  
 
 run ./install to build (run ./install -h to see options)
 
