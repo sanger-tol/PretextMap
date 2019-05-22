@@ -26,7 +26,13 @@ Contact maps are saved in a compressed texture format (hence the name). Maps can
 # Requirments, running
 3G of RAM and 2 CPU cores
 
-# Requirments, installation
+# Windows, Mac and Linux Builds
+Prebuild binaries for Windows, Mac and Linux are available<br/>
+The Mac binary was build on MacOS 10.13.6<br/>
+The Linux binary was build on kernel 3.13<br/>
+The Windows binary was build on Windows 10, and should work on at least Windows 7<br/>
+
+# Requirments, building via script (Mac and Linux only)
 make<br/>
 python (2 or 3) to run the installation script<br/>
 clang or gcc to compile<br/>
@@ -37,3 +43,13 @@ Tested on MacOS 10.13.6 with clang-9, clang-10-apple<br/>
 PretextMap requires libdeflate (https://github.com/ebiggers/libdeflate). By default the install script will clone and build the libdeflate.a static library for compilation with PretextMap. You can specify your own version to the install script if you wish (you'll have to specify appropriate liking flags as well if you specify a shared library).  
 
 run ./install to build (run ./install -h to see options)
+
+# Requirments, building on Windows
+Only recomended if the prebuilt binary doesn't work for you and you know how to compile executables for Windows.<br/>
+
+Tested on Windows 10 using the Visual Studio 2019 toolchain<br/>
+Tested with Microsoft cl and clang-9<br/>
+
+Requires libdeflate (https://github.com/ebiggers/libdeflate)<br/>
+
+Compile PretextMap.cpp and link against libdeflate<br/>

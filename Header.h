@@ -24,6 +24,8 @@ SOFTWARE.
 #define HEADER_H
 
 #ifdef _WIN32
+#define WINVER 0x0601 // Target Windows 7 as a Minimum Platform
+#define _WIN32_WINNT 0x0601
 #include <windows.h>
 #endif
 
@@ -675,6 +677,11 @@ ThreadPoolInit(memory_arena *arena, u32 nThreads)
 
 #define ThreadPoolAddTask(pool, func, args) ThreadPoolAddWork(pool, (void (*)(void *))func, (void *)args)
 
+#ifdef _WIN32
+#include <ctime>
+#define sleep(x) Sleep(1000 * x)
+#endif
+
 global_function
 void
 ThreadPoolAddWork(thread_pool *threadPool, void (*function)(void*), void *arg)
@@ -708,11 +715,6 @@ ThreadPoolWait(thread_pool *threadPool)
     
     UnlockMutex(threadPool->threadCountLock);
 }
-
-#ifdef _WIN32
-#include <ctime>
-#define sleep(x) Sleep(1000 * x)
-#endif
 
 global_function
 void
@@ -886,26 +888,6 @@ StringToInt_Check(u08 *string, u32 *result)
     goodResult = (goodResult && *string >= '0' && *string <= '9');
     
     return(goodResult);
-}
-
-global_function
-u32
-SIMDTestEquali(__m128i a, __m128i b)
-{
-	__m128i neq = _mm_xor_si128(a, b);
-	return((u32)_mm_test_all_zeros(neq, neq));
-}
-
-global_function
-__m128i
-CountSetBitsPerByte(__m128i x)
-{
-	__m128i countMask = _mm_set1_epi8(0x0F);
-	__m128i countTable = _mm_setr_epi8(0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4);
-	__m128i count0 = _mm_shuffle_epi8(countTable, _mm_and_si128(x, countMask));
-	__m128i count1 = _mm_shuffle_epi8(countTable, _mm_and_si128(_mm_srli_epi16(x, 4), countMask));
-
-	return(_mm_add_epi8(count0, count1));
 }
 
 global_function

@@ -20,8 +20,106 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#define PretextMap_Version "PretextMap Version 0.0.3"
+
 #include "Header.h"
 #include <math.h>
+
+global_variable
+u08
+Licence[] = R"lic(
+Copyright (c) 2019 Ed Harry, Wellcome Sanger Institute
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+)lic";
+
+global_variable
+u08
+ThirdParty[] = R"thirdparty(
+Third-party software and resources used in this project, along with their respective licenses:
+
+    This project uses libdeflate (https://github.com/ebiggers/libdeflate)
+        
+        Copyright 2016 Eric Biggers
+
+        Permission is hereby granted, free of charge, to any person
+        obtaining a copy of this software and associated documentation files
+        (the "Software"), to deal in the Software without restriction,
+        including without limitation the rights to use, copy, modify, merge,
+        publish, distribute, sublicense, and/or sell copies of the Software,
+        and to permit persons to whom the Software is furnished to do so,
+        subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be
+        included in all copies or substantial portions of the Software.
+
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+        EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+        MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+        NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+        BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+        ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+        CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+
+
+    This project uses stb_sprintf (https://github.com/nothings/stb/blob/master/stb_sprintf.h)
+
+        ALTERNATIVE B - Public Domain (www.unlicense.org)
+        This is free and unencumbered software released into the public domain.
+        Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
+        software, either in source code form or as a compiled binary, for any purpose, 
+        commercial or non-commercial, and by any means.
+        In jurisdictions that recognize copyright laws, the author or authors of this 
+        software dedicate any and all copyright interest in the software to the public 
+        domain. We make this dedication for the benefit of the public at large and to 
+        the detriment of our heirs and successors. We intend this dedication to be an 
+        overt act of relinquishment in perpetuity of all present and future rights to 
+        this software under copyright law.
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+        AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN 
+        ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+        WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+    This project uses stb_dxt (https://github.com/nothings/stb/blob/master/stb_dxt.h)
+
+        ALTERNATIVE B - Public Domain (www.unlicense.org)
+        This is free and unencumbered software released into the public domain.
+        Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
+        software, either in source code form or as a compiled binary, for any purpose, 
+        commercial or non-commercial, and by any means.
+        In jurisdictions that recognize copyright laws, the author or authors of this 
+        software dedicate any and all copyright interest in the software to the public 
+        domain. We make this dedication for the benefit of the public at large and to 
+        the detriment of our heirs and successors. We intend this dedication to be an 
+        overt act of relinquishment in perpetuity of all present and future rights to 
+        this software under copyright law.
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+        AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN 
+        ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+        WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+)thirdparty";
 
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wreserved-id-macro"
@@ -374,11 +472,18 @@ AddReadPairToImage(u64 read1, u64 read2)
     u32 min = Min(pixel1, pixel2);
     u32 max = Max(pixel1, pixel2);
     volatile u16 *pixel = &Images[0][min][max - min];
+#ifndef _WIN32
     volatile u16 oldVal = __atomic_fetch_add(pixel, 1, 0);
-
+#else
+    volatile u16 oldVal = __atomic_fetch_add((volatile unsigned long *)pixel, 1, 0);
+#endif
     if (oldVal == u16_max)
     {
+#ifndef _WIN32
         __atomic_store(pixel, &oldVal, 0);
+#else
+        __atomic_store((volatile unsigned long *)pixel, (volatile unsigned long *)&oldVal, 0);
+#endif
     }
 }
 
@@ -1557,8 +1662,26 @@ MainArgs
 {
     if (ArgCount == 1)
     {
-        printf("(...samformat |) PretextMap -o output.pretex (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend) --mapq {10}) (< samfile)");
+        printf("%s\n\n", PretextMap_Version);
+        printf("(...samformat |) PretextMap -o output.pretext (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend) --mapq {10}) (< samfile)\n\n");
+        printf("PretextMap --licence    <- view software licence\n");
+        printf("PretextMap --thirdparty <- view third party software used\n");
         exit(0);
+    }
+
+    if (ArgCount == 2)
+    {
+        if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[1], (u08 *)"--licence"))
+        {
+            printf("%s\n", Licence);
+            exit(0);
+        }
+        
+        if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[1], (u08 *)"--thirdparty"))
+        {
+            printf("%s\n", ThirdParty);
+            exit(0);
+        }
     }
     
     u32 outputNameGiven = 0;
