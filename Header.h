@@ -228,9 +228,9 @@ thread_context
 struct
 memory_arena
 {
-	u08 *base;
-	u64 currentSize;
-	u64 maxSize;
+    u08 *base;
+    u64 currentSize;
+    u64 maxSize;
 };
 
 struct
@@ -258,14 +258,14 @@ void
 CreateMemoryArena_(memory_arena *arena, u64 size, u32 alignment_pow2 = Default_Memory_Alignment_Pow2)
 {
 #ifndef _WIN32
-	posix_memalign((void **)&arena->base, Pow2(alignment_pow2), size);
+    posix_memalign((void **)&arena->base, Pow2(alignment_pow2), size);
 #else
-	#include <memoryapi.h>
-	(void)alignment_pow2;
-	arena->base = (u08 *)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#include <memoryapi.h>
+    (void)alignment_pow2;
+    arena->base = (u08 *)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 #endif
-	arena->currentSize = 0;
-	arena->maxSize = size;
+    arena->currentSize = 0;
+    arena->maxSize = size;
 }
 
 #define CreateMemoryArena(arena, size, ...) CreateMemoryArena_(&arena, size, ##__VA_ARGS__)
@@ -275,7 +275,7 @@ global_function
 void
 ResetMemoryArena_(memory_arena *arena)
 {
-	arena->currentSize = 0;
+    arena->currentSize = 0;
 }
 
 #define ResetMemoryArena(arena) ResetMemoryArena_(&arena)
@@ -285,7 +285,7 @@ global_function
 void
 FreeMemoryArena_(memory_arena *arena)
 {
-	free(arena->base);
+    free(arena->base);
 }
 
 #define FreeMemoryArena(arena) FreeMemoryArena_(&arena)
@@ -295,64 +295,64 @@ global_function
 u64
 GetAlignmentPadding(u64 base, u32 alignment_pow2)
 {
-	u64 alignment = (u64)Pow2(alignment_pow2);
-	u64 result = ((base + alignment - 1) & ~(alignment - 1)) - base;
+    u64 alignment = (u64)Pow2(alignment_pow2);
+    u64 result = ((base + alignment - 1) & ~(alignment - 1)) - base;
 
-	return(result);
+    return(result);
 }
 
 global_function
 u32
 AlignUp(u32 x, u32 alignment_pow2)
 {
-	u32 alignment_m1 = Pow2(alignment_pow2) - 1;
-	u32 result = (x + alignment_m1) & ~alignment_m1;
+    u32 alignment_m1 = Pow2(alignment_pow2) - 1;
+    u32 result = (x + alignment_m1) & ~alignment_m1;
 
-	return(result);
+    return(result);
 }
 
 global_function
 void *
 PushSize_(memory_arena *arena, u64 size, u32 alignment_pow2 = Default_Memory_Alignment_Pow2)
 {
-	u64 padding = GetAlignmentPadding((u64)(arena->base + arena->currentSize), alignment_pow2);
-	
-	void *result;
-	if((size + arena->currentSize + padding + sizeof(u64)) > arena->maxSize)
-	{
-		result = 0;
+    u64 padding = GetAlignmentPadding((u64)(arena->base + arena->currentSize), alignment_pow2);
+
+    void *result;
+    if((size + arena->currentSize + padding + sizeof(u64)) > arena->maxSize)
+    {
+	result = 0;
 #if defined(__APPLE__) || defined(_WIN32)
-	 	printf("Push of %llu bytes failed, out of memory.\n", size);   
+	printf("Push of %llu bytes failed, out of memory.\n", size);   
 #else
-		printf("Push of %lu bytes failed, out of memory.\n", size);
+	printf("Push of %lu bytes failed, out of memory.\n", size);
 #endif	
-		*((volatile u32 *)0) = 0;
-	}
-	else
-	{
-		result = arena->base + arena->currentSize + padding;
-		arena->currentSize += (size + padding + sizeof(u64));
+	*((volatile u32 *)0) = 0;
+    }
+    else
+    {
+	result = arena->base + arena->currentSize + padding;
+	arena->currentSize += (size + padding + sizeof(u64));
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"		
-		*((u64 *)(arena->base + arena->currentSize - sizeof(u64))) = (size + padding);
+	*((u64 *)(arena->base + arena->currentSize - sizeof(u64))) = (size + padding);
 #pragma clang diagnostic pop
-	}
-	
-	return(result);
+    }
+
+    return(result);
 }
 
 global_function
 void
 FreeLastPush_(memory_arena *arena)
 {
-	if (arena->currentSize)
-	{
+    if (arena->currentSize)
+    {
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
-		u64 sizeToRemove = *((u64 *)(arena->base + arena->currentSize - sizeof(u64)));
+	u64 sizeToRemove = *((u64 *)(arena->base + arena->currentSize - sizeof(u64)));
 #pragma clang diagnostic pop		
-		arena->currentSize -= (sizeToRemove + sizeof(u64));
-	}
+	arena->currentSize -= (sizeToRemove + sizeof(u64));
+    }
 }
 
 #define PushStruct(arena, type, ...) (type *)PushSize_(&arena, sizeof(type), ##__VA_ARGS__)
@@ -367,12 +367,12 @@ global_function
 memory_arena *
 PushSubArena_(memory_arena *mainArena, u64 size, u32 alignment_pow2 = Default_Memory_Alignment_Pow2)
 {
-	memory_arena *subArena = PushStructP(mainArena, memory_arena, alignment_pow2);
-	subArena->base = PushArrayP(mainArena, u08, size, alignment_pow2);
-	subArena->currentSize = 0;
-	subArena->maxSize = size;
+    memory_arena *subArena = PushStructP(mainArena, memory_arena, alignment_pow2);
+    subArena->base = PushArrayP(mainArena, u08, size, alignment_pow2);
+    subArena->currentSize = 0;
+    subArena->maxSize = size;
 
-	return(subArena);
+    return(subArena);
 }
 
 #define PushSubArena(arena, size, ...) PushSubArena_(&arena, size, ##__VA_ARGS__)
@@ -396,12 +396,12 @@ void
 BinarySemaphoreWait(binary_semaphore *bsem)
 {
     LockMutex(bsem->mut);
-    
+
     while (bsem->v != 1)
     {
 	WaitOnCond(bsem->con, bsem->mut);
     }
-    
+
     bsem->v = 0;
     UnlockMutex(bsem->mut);
 }
@@ -896,6 +896,26 @@ IntDivideCeil(u32 x, u32 y)
 {
 	u32 result = (x + y - 1) / y;
 	return(result);
+}
+
+//http://graphics.stanford.edu/~seander/bithacks.html#IntegerLogDeBruijn
+global_function
+u32
+HighestSetBit(u32 data)
+{
+    static const u32 MultiplyDeBruijnBitPosition[32] = 
+    {
+	0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30,
+	8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31
+    };
+
+    data |= data >> 1;
+    data |= data >> 2;
+    data |= data >> 4;
+    data |= data >> 8;
+    data |= data >> 16;
+
+    return(MultiplyDeBruijnBitPosition[(u32)(data * 0x07C4ACDDU) >> 27]);
 }
 
 //https://github.com/ZilongTan/fast-hash/blob/master/fasthash.c

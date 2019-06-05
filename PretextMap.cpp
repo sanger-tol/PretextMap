@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.0.3"
+#define PretextMap_Version "PretextMap Version 0.0.4-dev"
 
 #include "Header.h"
 #include <math.h>
@@ -495,6 +495,18 @@ global_variable
 volatile u64
 Total_Good_Reads;
 
+enum
+file_type
+{
+    sam,
+    pairs,
+    undet
+};
+
+global_variable
+file_type
+File_Type = undet;
+
 #define StatusPrintEvery 10000
 
 global_function
@@ -505,8 +517,18 @@ ProcessBodyLine(u08 *line)
     
     while (*line++ != '\t') {}
     u32 len = 1;
-    while (*++line != '\t') ++len;
-    u32 flags = StringToInt(line, len);
+    u32 flags;
+
+    if (File_Type == sam)
+    {
+        while (*++line != '\t') ++len;
+        flags = StringToInt(line, len);
+    }
+    else
+    {
+        --line;
+        flags = 0x1;
+    }
 
     if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
     {
@@ -517,13 +539,22 @@ ProcessBodyLine(u08 *line)
         while (*++line != '\t') ++len;
         u32 relPos1 = StringToInt(line, len);
 
-        len = 0;
-        while (*++line != '\t') ++len;
-        u32 mapq = StringToInt(line, len);
+        u32 mapq;
+        if (File_Type == sam)
+        {
+            len = 0;
+            while (*++line != '\t') ++len;
+            mapq = StringToInt(line, len);
+        }
+        else
+        {
+            mapq = Min_Map_Quality;
+        }
 
         if (mapq >= Min_Map_Quality)
         {
-            while (*++line != '\t') {}
+            if (File_Type == sam) while (*++line != '\t') {}
+            
             u32 sameContig = 0;
             u32 contigName2[16];
 
@@ -580,7 +611,12 @@ ProcessBodyLine(u08 *line)
     if ((nLinesTotal % StatusPrintEvery) == 0)
     {
         char buff[64];
-        stbsp_snprintf(buff, 64, "%$d read pairs processed, %$d good pairs found", nLinesTotal, Total_Good_Reads);
+        
+        if (File_Type == sam)
+            stbsp_snprintf(buff, 64, "%$d read pairs processed, %$d good pairs found", nLinesTotal, Total_Good_Reads);
+        else
+            stbsp_snprintf(buff, 64, "%$d read pairs processed", nLinesTotal);
+
         printf("\r%s", buff);
         fflush(stdout);
     }
@@ -594,12 +630,19 @@ ProcessHeaderLine(u08 *line)
     u32 buffIndex = 0;
     u08 *buff = (u08 *)buff32;
 
-    while (*line != '\t')
+    if (File_Type == sam)
     {
-        ++line;
+        while (*line != '\t')
+        {
+            ++line;
+        }
+        line += 4;
     }
-    line += 4;
-    
+    else
+    {
+        line += 12;
+    }
+
     while (*line != '\t')
     {
         *buff++ = *line++;
@@ -616,7 +659,7 @@ ProcessHeaderLine(u08 *line)
     {
         buff32[index] = 0;
     }
-    line += 4;
+    line += (File_Type == sam ? 4 : 1);
 
     u32 count = 1;
     while (*++line != '\n')
@@ -871,7 +914,10 @@ FinishProcessingHeader()
                 printf("ascending");
             }
         }
-        printf(". Filtering by minimum mapping quality %d\n", Min_Map_Quality);
+        if (File_Type == sam)
+            printf(". Filtering by minimum mapping quality %d\n", Min_Map_Quality);
+        else
+            printf("\n");
     }
 }
 
@@ -891,7 +937,7 @@ ProcessLine(void *in)
         Processing_Body = 1;
         ProcessBodyLine(line);
     }
-    else if (line[0] == '@')
+    else if (File_Type == sam && line[0] == '@')
     {
         if (line[1] == 'S')
         {
@@ -900,6 +946,13 @@ ProcessLine(void *in)
         else if (line[1] != 'H')
         {
             FinishProcessingHeader();
+        }
+    }
+    else if (File_Type == pairs && line[0] == '#')
+    {
+        if ((*((u64 *)((void *)line))) == 0x69736d6f72686323) // #chromsi
+        {
+            ProcessHeaderLine(line);
         }
     }
     else
@@ -916,6 +969,8 @@ global_function
 void
 GrabStdIn()
 {
+
+    
     line_buffer *buffer = 0;
     u32 bufferPtr = 0;
     s32 character;
@@ -939,11 +994,46 @@ GrabStdIn()
             }
             else if (buffer->line[0] == '@' && buffer->line[1] == 'S')
             {
+                if (File_Type != sam && File_Type != undet)
+                {
+                    fprintf(stderr, "Error, inconsistent file type\n");
+                    break;
+                }
+                else if (File_Type == undet)
+                {
+                    File_Type = sam;
+                }
+
+                IncramentNumberOfHeaderLines();
+                ++Number_of_Contigs;
+            }
+            else if ((*((u64 *)buffer->line)) == 0x69736d6f72686323) // #chromsi
+            {
+                if (File_Type != pairs && File_Type != undet)
+                {
+                    fprintf(stderr, "Error, inconsistent file type\n");
+                    break;
+                }
+                else if (File_Type == undet)
+                {
+                    File_Type = pairs;
+                }
+
                 IncramentNumberOfHeaderLines();
                 ++Number_of_Contigs;
             }
 
-            ThreadPoolAddTask(Thread_Pool, ProcessLine, (void *)buffer);
+            switch (File_Type)
+            {
+                case undet:
+                    AddLineBufferToQueue(Line_Buffer_Queue, buffer);
+                    break;
+            
+                case sam:
+                case pairs:
+                    ThreadPoolAddTask(Thread_Pool, ProcessLine, (void *)buffer);
+            }
+
             buffer = 0;
             bufferPtr = 0;
         }
@@ -1132,6 +1222,8 @@ CreateMipMap(void *in)
         {
             ResetBinaryHeap(heap);
 
+            f32 totalWeight = 0.0f;
+
             for (   u32 pixel_x = (index + index2) * pixelResBin, binId_x = 0;
                     binId_x < pixelResBin;
                     ++pixel_x, ++binId_x )
@@ -1150,23 +1242,25 @@ CreateMipMap(void *in)
 
                     heap_node node;
                     node.value = (u32)pixel;
-                    node.weight = weight;
+                    node.weight = weight * ((f32)pixel + (Total_Good_Reads > 1e7 ? 1.0f : (f32)1e-4));
+                    totalWeight += node.weight;
 
                     HeapInsertKey(heap, node);
                 }
             }
             
             {
+                totalWeight *= 0.5f;
                 f32 total = 0.0f;
                 u32 value = 0;
-                while (total < 0.5f)
+                while (total < totalWeight)
                 {
                     heap_node node = HeapExtractMin(heap);
                     value = node.value;
                     total += node.weight;
                 }
                 u16 val;
-                if (total == 0.5f)
+                if ((total - totalWeight) < (f32)1e-4)
                 {
                     val = (u16)((((f32)value) + ((f32)(HeapGetMin(heap).value))) * 0.5f);
                 }
@@ -1247,6 +1341,27 @@ ContrastEqualisation(void *in)
             maxNorm = Max(maxNorm, tmp);
         }
     } while (maxNorm > (f32)KL_Norm_Tol && klIter++ < KL_Max_Iter);
+
+    ForLoop(nPixels)
+    {
+        ForLoop2(nPixels - index)
+        {
+            u16 pixel = image[index][index2];
+            if (pixel)
+            {
+                u16 newPixel = 0;
+
+                while (pixel)
+                {
+                    u32 set = HighestSetBit((u32)pixel);
+                    pixel &= ~(1 << set);
+                    newPixel |= (1 << (set >> 1));
+                }
+
+                image[index][index2] = newPixel;
+            }
+        }
+    }
 
     max = 0;
     u16 min = u16_max;
