@@ -445,10 +445,10 @@ InitaliseImages()
         Images[imIndex] = PushArray(Working_Set, volatile u16*, Pixel_Resolution(depth));
         
         Image_Histograms[imIndex] = PushArray(Working_Set, u32, 1 << 8);
-        memset(Image_Histograms[imIndex], 0, 1 << 8);
+        memset(Image_Histograms[imIndex], 0, (1 << 8) * sizeof(u32));
 
         Image_Norm_Scalars[imIndex] = PushArray(Working_Set, f32, Pixel_Resolution(depth));
-        memset(Image_Norm_Scalars[imIndex], 0, Pixel_Resolution(depth));
+        memset(Image_Norm_Scalars[imIndex], 0, Pixel_Resolution(depth) * sizeof(f32));
 
         ForLoop(Pixel_Resolution(depth))
         {
@@ -1871,7 +1871,7 @@ MainArgs
     }
 
     InitialiseMutex(Working_Set_rwMutex);
-    Number_of_Threads = 6;
+    Number_of_Threads = 3;
 
     CreateMemoryArena(Working_Set, GigaByte((u64)3));
     Thread_Pool = ThreadPoolInit(&Working_Set, Number_of_Threads);
