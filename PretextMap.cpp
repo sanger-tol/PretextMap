@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.0.4-dev"
+#define PretextMap_Version "PretextMap Version 0.0.4"
 
 #include "Header.h"
 #include <math.h>
@@ -1778,7 +1778,7 @@ MainArgs
     if (ArgCount == 1)
     {
         printf("%s\n\n", PretextMap_Version);
-        printf("(...samformat |) PretextMap -o output.pretext (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend) --mapq {10}) (< samfile)\n\n");
+        printf("(...samformat, ...pairsformat |) PretextMap -o output.pretext (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend) --mapq {10}) (< samfile, pairsfile)\n\n");
         printf("PretextMap --licence    <- view software licence\n");
         printf("PretextMap --thirdparty <- view third party software used\n");
         exit(0);
