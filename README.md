@@ -1,16 +1,18 @@
 # PretextMap
-Paired REad TEXTure Mapper. Converts SAM formatted read pairs into genome contact maps.
+Paired REad TEXTure Mapper. Converts SAM or pairs formatted read pairs into genome contact maps. See https://github.com/4dn-dcic/pairix/blob/master/pairs_format_specification.md for pairs format specification.<br/>
+Pairs format supported by version 0.04 or later only.
 
-PretextMap is a commandline tool for converting aligned read pairs in the SAM/BAM/CRAM format into genomic contact maps (https://github.com/aidenlab/juicer/wiki/Pre, https://higlass.io/).
+PretextMap is a commandline tool for converting aligned read pairs in either the SAM/BAM/CRAM or pairs format into genomic contact maps (https://github.com/aidenlab/juicer/wiki/Pre, https://higlass.io/).
 
-Data is read from stdin over a unix pipe, eliminating the need for any intermidiate files. Alignments can be read directly from an aligner (<aligner> | PretextMap), from a SAM file (PretextMap < file.sam) or from a BAM/CRAM file using samtools (samtools view -h file.bam | PretextMap). PretextMap can even be inserted into the middle of existing pipelines by using tee or similar pipe-chaining tricks.
+Data is read from stdin over a unix pipe, eliminating the need for any intermidiate files. Alignments can be read directly from an aligner (<aligner> | PretextMap), from a SAM file (PretextMap < file.sam), from a BAM/CRAM file using samtools (samtools view -h file.bam | PretextMap) or from a pairs file (PretextMap < file.pairs). PretextMap can even be inserted into the middle of existing pipelines by using tee or similar pipe-chaining tricks.
 
 PretextMap comes with no imposed pipeline for processing data. Process your alignments however you want before feeding to PretextMap.
 
 # Usage
-Pipe SAM formatted read pairs to PretextMap e.g. samtools view -h file.bam | PretextMap<br/>
-Important: A SAM header with contig info must be present (-h option for samtools).<br/>
+Pipe SAM or pairs formatted read pairs to PretextMap e.g. samtools view -h file.bam | PretextMap, zcat file.paris.gz | PretextMap<br/>
+Important: A SAM header with contig info must be present for SAM format (-h option for samtools).<br/>
 Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
+Note: 
 
 # Options
 -o specifies an output file (required)<br/>
