@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.0.4"
+#define PretextMap_Version "PretextMap Version 0.0.41"
 
 #include "Header.h"
 #include <math.h>
@@ -969,18 +969,19 @@ global_function
 void
 GrabStdIn()
 {
-
-    
     line_buffer *buffer = 0;
     u32 bufferPtr = 0;
     s32 character;
     while ((character = getchar()) != EOF)
     {
-        while (!buffer) //TODO Semaphore for Queue has free buffer
-        {
-            buffer = TakeLineBufferFromQueue(Line_Buffer_Queue);
-        }
+        if (!buffer) buffer = TakeLineBufferFromQueue_Wait(Line_Buffer_Queue);
         buffer->line[bufferPtr++] = (u08)character;
+
+        if (bufferPtr == Line_Buffer_Size && character != 10)
+        {
+            while ((character = getchar()) != 10) {}
+            buffer->line[bufferPtr-1] = (u08)character;
+        }
 
         if (character == 10)
         {
@@ -1028,7 +1029,7 @@ GrabStdIn()
                 case undet:
                     AddLineBufferToQueue(Line_Buffer_Queue, buffer);
                     break;
-            
+
                 case sam:
                 case pairs:
                     ThreadPoolAddTask(Thread_Pool, ProcessLine, (void *)buffer);
@@ -1036,12 +1037,6 @@ GrabStdIn()
 
             buffer = 0;
             bufferPtr = 0;
-        }
-        else if (bufferPtr == Line_Buffer_Size)
-        {
-            buffer->line[bufferPtr-1] = '\0';
-            fprintf(stderr, "Error: line found larger than %d characters\n\n%s\n", Line_Buffer_Size, buffer->line);
-            break;
         }
     }
 }
@@ -1698,8 +1693,6 @@ CreateDXTTextures()
         {
             *header++ = *ptr++;
         }
-        //*((u64 *)header) = val64; 
-        //header += 8;
         
         u32 val32 = (u32)Number_of_Contigs;
         ptr = (u08 *)&val32;
@@ -1707,8 +1700,6 @@ CreateDXTTextures()
         {
             *header++ = *ptr++;
         }
-        //*((u32 *)header) = val32;
-        //header += 4;
 
         ForLoop(Number_of_Contigs)
         {
@@ -1721,31 +1712,22 @@ CreateDXTTextures()
             {
                 *header++ = *ptr++;
             }
-            //*((f32 *)header) = fracLength;
-            //header += 4;
 
             ptr = (u08 *)name;
             ForLoop2(64)
             {
                 *header++ = *ptr++;
-                //*((u32 *)header) = name[index2];
-                //header += 4;
             }
         }
 
         u08 val = Single_Texture_Resolution;
         *header++ = val;
-        //*((u08 *)header) = val;
-        //header += 1;
 
         val = (u08)nTextResolution;
         *header++ = val;
-        //*((u08 *)header) = val;
-        //header += 1;
 
         val = Number_of_LODs;
         *header = val;
-        //*((u08 *)header) = val;
 
         u32 nCommpressedBytes;
         if (!(nCommpressedBytes = (u32)libdeflate_deflate_compress(compressor, (const void *)headerStart, nBytesHeader, (void *)compBuff, nBytesComp)))
