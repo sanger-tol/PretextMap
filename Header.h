@@ -102,7 +102,7 @@ typedef size_t memptr;
 #define ArgBuffer argv
 #define Main s32 main()
 #define MainArgs s32 main(s32 ArgCount, const char *ArgBuffer[])
-#define EndMain return(0)
+#define EndMain return(EXIT_SUCCESS)
 
 #ifndef _WIN32
 #include <pthread.h>

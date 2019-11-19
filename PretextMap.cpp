@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.0.41"
+#define PretextMap_Version "PretextMap Version 0.1"
 
 #include "Header.h"
 #include <math.h>
@@ -54,8 +54,7 @@ u08
 ThirdParty[] = R"thirdparty(
 Third-party software and resources used in this project, along with their respective licenses:
 
-    This project uses libdeflate (https://github.com/ebiggers/libdeflate)
-        
+    libdeflate (https://github.com/ebiggers/libdeflate)
         Copyright 2016 Eric Biggers
 
         Permission is hereby granted, free of charge, to any person
@@ -78,9 +77,35 @@ Third-party software and resources used in this project, along with their respec
         CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
         SOFTWARE.
 
+    mpc (https://github.com/orangeduck/mpc)
+        Licensed Under BSD
 
-    This project uses stb_sprintf (https://github.com/nothings/stb/blob/master/stb_sprintf.h)
+        Copyright (c) 2013, Daniel Holden All rights reserved.
 
+        Redistribution and use in source and binary forms, with or without
+        modification, are permitted provided that the following conditions are met:
+
+        Redistributions of source code must retain the above copyright notice, 
+        this list of conditions and the following disclaimer.
+        Redistributions in binary form must reproduce the above copyright notice, 
+        this list of conditions and the following disclaimer in the documentation 
+        and/or other materials provided with the distribution.
+        THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+        AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+        IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+        ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE 
+        FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES 
+        (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+        LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON 
+        ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+        (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF 
+        THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+        The views and conclusions contained in the software and documentation are those of 
+        the authors and should not be interpreted as representing official policies, either 
+        expressed or implied, of the FreeBSD Project.
+    
+    stb_sprintf (https://github.com/nothings/stb/blob/master/stb_sprintf.h)
         ALTERNATIVE B - Public Domain (www.unlicense.org)
         This is free and unencumbered software released into the public domain.
         Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
@@ -100,8 +125,7 @@ Third-party software and resources used in this project, along with their respec
         WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-    This project uses stb_dxt (https://github.com/nothings/stb/blob/master/stb_dxt.h)
-
+    stb_dxt (https://github.com/nothings/stb/blob/master/stb_dxt.h)
         ALTERNATIVE B - Public Domain (www.unlicense.org)
         This is free and unencumbered software released into the public domain.
         Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
@@ -121,6 +145,30 @@ Third-party software and resources used in this project, along with their respec
         WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 )thirdparty";
 
+global_variable
+u08
+Status_Marco_Expression_Sponge = 0;
+
+global_variable
+char
+Message_Buffer[1024];
+
+#define PrintError(message, ...) \
+{ \
+stbsp_snprintf(Message_Buffer, 512, message, ##__VA_ARGS__); \
+stbsp_snprintf(Message_Buffer + 512, 512, "[PretextMap error] :: %s\n", Message_Buffer); \
+fprintf(stderr, "%s", Message_Buffer + 512); \
+} \
+Status_Marco_Expression_Sponge = 0
+
+#define PrintStatus(message, ...) \
+{ \
+stbsp_snprintf(Message_Buffer, 512, message, ##__VA_ARGS__); \
+stbsp_snprintf(Message_Buffer + 512, 512, "[PretextMap status] :: %s\n", Message_Buffer); \
+fprintf(stdout, "%s", Message_Buffer + 512); \
+} \
+Status_Marco_Expression_Sponge = 0
+
 #pragma clang diagnostic push
 #pragma GCC diagnostic ignored "-Wreserved-id-macro"
 #pragma GCC diagnostic ignored "-Wsign-conversion"
@@ -133,6 +181,11 @@ Third-party software and resources used in this project, along with their respec
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb_sprintf.h"
+#pragma clang diagnostic pop
+
+#pragma clang diagnostic push
+#pragma GCC diagnostic ignored "-Wpadded"
+#include "mpc.h"
 #pragma clang diagnostic pop
 
 global_variable
@@ -152,10 +205,6 @@ Processing_Body_Thread = 0;
 global_variable
 u32
 Processing_Body = 0;
-
-global_variable
-u32
-Number_of_Threads;
 
 global_variable
 threadSig
@@ -211,7 +260,7 @@ PushStringIntoIntArray(u32 *intArray, u32 arrayLength, u08 *string, u08 stringTe
     u08 *stringToInt = (u08 *)intArray;
     u32 stringLength = 0;
 
-    while(*string != stringTerminator)
+    while(*string != stringTerminator && stringLength < (arrayLength << 2))
     {
         *(stringToInt++) = *(string++);
         ++stringLength;
@@ -268,9 +317,9 @@ InitiateContigHashTable()
 
 global_function
 void
-InsertContigIntoHashTable(u32 index, u32 hash)
+InsertContigIntoHashTable(u32 index, u32 hash, contig_hash_table_node **table = Contig_Hash_Table)
 {
-    contig_hash_table_node *node = Contig_Hash_Table[hash];
+    contig_hash_table_node *node = table[hash];
     contig_hash_table_node *nextNode = node ? node->next : 0;
 
     while (nextNode)
@@ -284,19 +333,19 @@ InsertContigIntoHashTable(u32 index, u32 hash)
     newNode->index = index;
     newNode->next = 0;
     
-    (node ? node->next : Contig_Hash_Table[hash]) = newNode;
+    (node ? node->next : table[hash]) = newNode;
 }
 
 global_function
 u32
-ContigHashTableLookup(u32 *name, u32 nameLength, u32 *index)
+ContigHashTableLookup(u32 *name, u32 nameLength, contig **cont, contig *contigs = Contigs, contig_hash_table_node **table = Contig_Hash_Table)
 {
     u32 result = 1;
 
-    contig_hash_table_node *node = Contig_Hash_Table[GetHashedContigName(name, nameLength)];
+    contig_hash_table_node *node = table[GetHashedContigName(name, nameLength)];
     if (node)
     {
-        while (!AreNullTerminatedStringsEqual(name, (Contigs + node->index)->name, nameLength))
+        while (!AreNullTerminatedStringsEqual(name, (contigs + node->index)->name, nameLength))
         {
             if (node->next)
             {
@@ -311,78 +360,7 @@ ContigHashTableLookup(u32 *name, u32 nameLength, u32 *index)
 
         if (result)
         {
-            *index = node->index;
-        }
-    }
-    else
-    {
-        result = 0;
-    }
-
-    return(result);
-}
-
-global_function
-u32
-ContigHashTableLookup(u32 *name, u32 nameLength, contig **cont)
-{
-    u32 result = 1;
-
-    contig_hash_table_node *node = Contig_Hash_Table[GetHashedContigName(name, nameLength)];
-    if (node)
-    {
-        while (!AreNullTerminatedStringsEqual(name, (Contigs + node->index)->name, nameLength))
-        {
-            if (node->next)
-            {
-                node = node->next;
-            }
-            else
-            {
-                result = 0;
-                break;
-            }
-        }
-
-        if (result)
-        {
-            *cont = Contigs + node->index;
-        }
-    }
-    else
-    {
-        result = 0;
-    }
-
-    return(result);
-}
-
-global_function
-u32
-ContigHashTableLookup(u32 *name, u32 nameLength, u32 *index, contig **cont)
-{
-    u32 result = 1;
-
-    contig_hash_table_node *node = Contig_Hash_Table[GetHashedContigName(name, nameLength)];
-    if (node)
-    {
-        while (!AreNullTerminatedStringsEqual(name, (Contigs + node->index)->name, nameLength))
-        {
-            if (node->next)
-            {
-                node = node->next;
-            }
-            else
-            {
-                result = 0;
-                break;
-            }
-        }
-
-        if (result)
-        {
-            *index = node->index;
-            *cont = Contigs + node->index;
+            *cont = contigs + node->index;
         }
     }
     else
@@ -610,16 +588,168 @@ ProcessBodyLine(u08 *line)
 
     if ((nLinesTotal % StatusPrintEvery) == 0)
     {
-        char buff[64];
+        char buff[128];
         
         if (File_Type == sam)
-            stbsp_snprintf(buff, 64, "%$d read pairs processed, %$d good pairs found", nLinesTotal, Total_Good_Reads);
+            stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$d read pairs processed, %$d read pairs mapped", nLinesTotal, Total_Good_Reads);
         else
-            stbsp_snprintf(buff, 64, "%$d read pairs processed", nLinesTotal);
+            stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$d read pairs mapped", nLinesTotal);
 
         printf("\r%s", buff);
         fflush(stdout);
     }
+}
+
+global_variable
+contig *
+Filter_Include_Contigs = 0;
+
+global_variable
+contig *
+Filter_Exclude_Contigs = 0;
+
+global_variable
+contig_hash_table_node **
+Filter_Include_Hash_Table = 0;
+
+global_variable
+contig_hash_table_node **
+Filter_Exclude_Hash_Table = 0;
+
+global_function
+void
+CreateFilters(const char *includeFilterString, const char *excludeFilterString)
+{
+    mpc_parser_t *name = mpc_new("name");
+    mpc_parser_t *syntax = mpc_new("syntax");
+    mpca_lang   (MPCA_LANG_DEFAULT,
+            " name : /[0-9A-Za-z!#$%&\\+\\.\\/:;\\?@^_|~\\-][0-9A-Za-z!#$%&\\*\\+\\.\\/:;=\\?@^_|~\\-]*/;"
+            " syntax : /^/ <name> (',' <name>)* /$/;",
+            name, syntax, NULL
+            );
+
+    mpc_result_t result;
+
+    if (includeFilterString)
+    {
+        if (mpc_parse("include filter", includeFilterString, syntax, &result))
+        {
+            mpc_ast_t *syntaxTree = (mpc_ast_t *)result.output;
+            u32 nToAdd = 0;
+            ForLoop((u32)syntaxTree->children_num)
+            {
+                if (strstr(syntaxTree->children[index]->tag, "name")) ++nToAdd;
+            }
+
+            if (nToAdd)
+            {
+                u32 buff[16];
+
+                Filter_Include_Contigs = PushArray(Working_Set, contig, nToAdd);
+                Filter_Include_Hash_Table = PushArray(Working_Set, contig_hash_table_node*, Contig_Hash_Table_Size);
+
+                ForLoop(Contig_Hash_Table_Size)
+                {
+                    *(Filter_Include_Hash_Table + index) = 0;
+                }
+                u32 count = 0;
+                ForLoop((u32)syntaxTree->children_num)
+                {
+                    if (strstr(syntaxTree->children[index]->tag, "name"))
+                    {
+                        PushStringIntoIntArray(buff, ArrayCount(buff), (u08 *)syntaxTree->children[index]->contents);
+                        contig *cont = Filter_Include_Contigs + count;
+
+                        ForLoop2(ArrayCount(buff))
+                        {
+                            cont->name[index2] = buff[index2];
+                        }
+
+                        InsertContigIntoHashTable(count++, GetHashedContigName(buff, ArrayCount(buff)), Filter_Include_Hash_Table);
+                    }
+                }
+            }
+
+            mpc_ast_delete((mpc_ast_t *)result.output);
+        }
+        else
+        {
+            PrintError(mpc_err_string(result.error));
+            mpc_err_delete(result.error);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (excludeFilterString)
+    {
+        if (mpc_parse("exclude filter", excludeFilterString, syntax, &result))
+        {
+            mpc_ast_t *syntaxTree = (mpc_ast_t *)result.output;
+            u32 nToAdd = 0;
+            ForLoop((u32)syntaxTree->children_num)
+            {
+                if (strstr(syntaxTree->children[index]->tag, "name")) ++nToAdd;
+            }
+
+            if (nToAdd)
+            {
+                u32 buff[16];
+
+                Filter_Exclude_Contigs = PushArray(Working_Set, contig, nToAdd);
+                Filter_Exclude_Hash_Table = PushArray(Working_Set, contig_hash_table_node*, Contig_Hash_Table_Size);
+
+                ForLoop(Contig_Hash_Table_Size)
+                {
+                    *(Filter_Exclude_Hash_Table + index) = 0;
+                }
+                u32 count = 0;
+                ForLoop((u32)syntaxTree->children_num)
+                {
+                    if (strstr(syntaxTree->children[index]->tag, "name"))
+                    {
+                        PushStringIntoIntArray(buff, ArrayCount(buff), (u08 *)syntaxTree->children[index]->contents);
+                        contig *cont = Filter_Exclude_Contigs + count;
+
+                        ForLoop2(ArrayCount(buff))
+                        {
+                            cont->name[index2] = buff[index2];
+                        }
+
+                        InsertContigIntoHashTable(count++, GetHashedContigName(buff, ArrayCount(buff)), Filter_Exclude_Hash_Table);
+                    }
+                }
+            }
+
+            mpc_ast_delete((mpc_ast_t *)result.output);
+        }
+        else
+        {
+            PrintError(mpc_err_string(result.error));
+            mpc_err_delete(result.error);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    mpc_cleanup(2, name, syntax);
+}
+
+global_function
+u32
+FilterSequenceName(u32 *name, u32 nameLength)
+{
+    u32 returnResult = 1;
+
+    contig *tmp;
+    if (Filter_Include_Hash_Table) 
+    {
+        returnResult = ContigHashTableLookup(name, nameLength, &tmp, Filter_Include_Contigs, Filter_Include_Hash_Table);
+    }
+    if (Filter_Exclude_Hash_Table)
+    {
+        returnResult = returnResult && !ContigHashTableLookup(name, nameLength, &tmp, Filter_Exclude_Contigs, Filter_Exclude_Hash_Table);
+    }
+
+    return(returnResult);
 }
 
 global_function
@@ -659,45 +789,50 @@ ProcessHeaderLine(u08 *line)
     {
         buff32[index] = 0;
     }
-    line += (File_Type == sam ? 4 : 1);
 
-    u32 count = 1;
-    while (*++line != '\n')
+    if (FilterSequenceName(buff32, ArrayCount(buff32)))
     {
-        ++count;
-    }
-    u32 length = StringToInt(line, count);
-    u32 hash = GetHashedContigName(buff32, ArrayCount(buff32));
+        line += (File_Type == sam ? 4 : 1);
 
-    LockMutex(Working_Set_rwMutex);
+        u32 count = 1;
+        while (*++line != '\n')
+        {
+            ++count;
+        }
+        u32 length = StringToInt(line, count);
+        u32 hash = GetHashedContigName(buff32, ArrayCount(buff32));
 
-    if (!First_Contig_Preprocess_Node)
-    {
-        TakeMemoryArenaSnapshot(&Working_Set, (memory_arena_snapshot *)&Contig_Preprocess_SnapShot);
-    }
+        LockMutex(Working_Set_rwMutex);
 
-    contig_preprocess_node *node = PushStruct(Working_Set, contig_preprocess_node);
-    if (!First_Contig_Preprocess_Node)
-    {
-        First_Contig_Preprocess_Node = node;
-    }
-    else
-    {
-        Current_Contig_Preprocess_Node->next = node;
-    }
-    
-    node->length = length;
-    node->hashedName = hash;
-    node->next = 0;
+        if (!First_Contig_Preprocess_Node)
+        {
+            TakeMemoryArenaSnapshot(&Working_Set, (memory_arena_snapshot *)&Contig_Preprocess_SnapShot);
+        }
 
-    ForLoop(ArrayCount(buff32))
-    {
-        node->name[index] = buff32[index];
-    }
+        contig_preprocess_node *node = PushStruct(Working_Set, contig_preprocess_node);
+        if (!First_Contig_Preprocess_Node)
+        {
+            First_Contig_Preprocess_Node = node;
+        }
+        else
+        {
+            Current_Contig_Preprocess_Node->next = node;
+        }
 
-    Current_Contig_Preprocess_Node = node;
-    UnlockMutex(Working_Set_rwMutex);
-    
+        node->length = length;
+        node->hashedName = hash;
+        node->next = 0;
+
+        ForLoop(ArrayCount(buff32))
+        {
+            node->name[index] = buff32[index];
+        }
+
+        Current_Contig_Preprocess_Node = node;
+
+        ++Number_of_Contigs;
+        UnlockMutex(Working_Set_rwMutex);
+    }
     DecrementNumberHeaderLines();
 }
 
@@ -735,6 +870,12 @@ FinishProcessingHeader()
     if (__atomic_fetch_add(&Finishing_Header, 1, 0) == 0)
     {
         while (Number_of_Header_Lines) {}
+
+        if (!Number_of_Contigs)
+        {
+            PrintError("0 sequences to map to");
+            exit(EXIT_FAILURE);
+        }
 
         u32 *indexes = PushArray(Working_Set, u32, Number_of_Contigs);
         u32 *tmpSpace = PushArray(Working_Set, u32, Number_of_Contigs);
@@ -885,7 +1026,7 @@ FinishProcessingHeader()
 
         Processing_Body_Thread = 1;
 
-        printf("Mapping to %d contigs, ", Number_of_Contigs);
+        printf("[PretextMap status] :: Mapping to %d sequences, ", Number_of_Contigs);
         if (Sort_By == noSort)
         {
             printf("unsorted");
@@ -972,7 +1113,12 @@ GrabStdIn()
     line_buffer *buffer = 0;
     u32 bufferPtr = 0;
     s32 character;
+#ifdef ReadTest
+    FILE *testFile = fopen("test.in", "rb");
+    while ((character = getc(testFile)) != EOF)
+#else
     while ((character = getchar()) != EOF)
+#endif
     {
         if (!buffer) buffer = TakeLineBufferFromQueue_Wait(Line_Buffer_Queue);
         buffer->line[bufferPtr++] = (u08)character;
@@ -997,7 +1143,7 @@ GrabStdIn()
             {
                 if (File_Type != sam && File_Type != undet)
                 {
-                    fprintf(stderr, "Error, inconsistent file type\n");
+                    PrintError("Error, inconsistent file type");
                     break;
                 }
                 else if (File_Type == undet)
@@ -1006,13 +1152,12 @@ GrabStdIn()
                 }
 
                 IncramentNumberOfHeaderLines();
-                ++Number_of_Contigs;
             }
             else if ((*((u64 *)buffer->line)) == 0x69736d6f72686323) // #chromsi
             {
                 if (File_Type != pairs && File_Type != undet)
                 {
-                    fprintf(stderr, "Error, inconsistent file type\n");
+                    PrintError("Error, inconsistent file type");
                     break;
                 }
                 else if (File_Type == undet)
@@ -1021,7 +1166,6 @@ GrabStdIn()
                 }
 
                 IncramentNumberOfHeaderLines();
-                ++Number_of_Contigs;
             }
 
             switch (File_Type)
@@ -1039,6 +1183,9 @@ GrabStdIn()
             bufferPtr = 0;
         }
     }
+#ifdef ReadTest
+    fclose(testFile);
+#endif
 }
 
 global_function
@@ -1237,7 +1384,7 @@ CreateMipMap(void *in)
 
                     heap_node node;
                     node.value = (u32)pixel;
-                    node.weight = weight * ((f32)pixel + (Total_Good_Reads > 1e7 ? 1.0f : (f32)1e-4));
+                    node.weight = weight * ((f32)pixel + ((u64)Total_Good_Reads > (u64)1e7 ? 1.0f : (f32)1e-4));
                     totalWeight += node.weight;
 
                     HeapInsertKey(heap, node);
@@ -1396,34 +1543,8 @@ ContrastEqualisation(void *in)
         }
     }
 
-    /*ForLoop(nPixels)
-    {
-        ForLoop2(nPixels - index)
-        {
-            if (index2)
-            {
-                u16 pixel = image[index][index2];
-                if (pixel)
-                {
-                    ++hist[pixel];
-                    ++nnz;
-                }
-            }
-        }
-    }*/
-
     if (nnz)
     {
-        /*u32 nFilledBins = 0;
-
-        ForLoop(1 << 16)
-        {
-            if (hist[index])
-            {
-                ++nFilledBins;
-            }
-        }*/
-
         u32 C = (u32)(((f32)Contrast_Histogram_Cutoff_Slope * (f32)(nnz) / 256.0f) + 0.5f);
         u32 S = 0;
 
@@ -1527,6 +1648,7 @@ ContrastEqualisation(void *in)
 #pragma GCC diagnostic ignored "-Wextra-semi-stmt"
 #pragma GCC diagnostic ignored "-Wcomma"
 #pragma GCC diagnostic ignored "-Wconditional-uninitialized"
+#pragma GCC diagnostic ignored "-Wimplicit-int-float-conversion"
 #define STB_DXT_IMPLEMENTATION
 #include "stb_dxt.h"
 #pragma clang diagnostic pop
@@ -1565,7 +1687,7 @@ WriteTexturesToFile(texture_buffer *buffer)
     
     fwrite(&buffer->nCommpressedBytes, 1, 4, Output_File);
     fwrite(buffer->compressionBuffer, 1, buffer->nCommpressedBytes, Output_File);
-    printf("\r%3d/%3d (%1.2f%%) texture blocks written to disk...", Texture_Coordinate_Ptr + 1, Number_of_Texture_Blocks, 100.0 * (f64)((f32)(Texture_Coordinate_Ptr + 1) / (f32)Number_of_Texture_Blocks));
+    printf("\r [PretextMap status] :: %3d/%3d (%1.2f%%) texture blocks written to disk...", Texture_Coordinate_Ptr + 1, Number_of_Texture_Blocks, 100.0 * (f64)((f32)(Texture_Coordinate_Ptr + 1) / (f32)Number_of_Texture_Blocks));
     fflush(stdout);
 
     AddTextureBufferToQueue(Texture_Buffer_Queue, buffer);
@@ -1636,8 +1758,8 @@ CreateDXTTexture(void *in)
 
     if (!(buffer->nCommpressedBytes = (u32)libdeflate_deflate_compress(buffer->compressor, (const void *)buffer->texture, bufferPtr, (void *)buffer->compressionBuffer, buffer->nCommpressedBytesAvailable)))
     {
-        fprintf(stderr, "Could not compress a texture info the given buffer\n");
-        exit(1);
+        PrintError("Could not compress a texture info the given buffer");
+        exit(EXIT_FAILURE);
     }
 
     WriteTexturesToFile(buffer);
@@ -1667,16 +1789,16 @@ CreateDXTTextures()
     Output_File = fopen(File_Name, "wb");
     if (!Output_File)
     {
-        fprintf(stderr, "Could not open output file\n");
-        exit(1);
+        PrintError("Could not open output file");
+        exit(EXIT_FAILURE);
     }
     else
     {
         libdeflate_compressor *compressor = libdeflate_alloc_compressor(12);
         if (!compressor)
         {
-            fprintf(stderr, "Could not allocate libdeflate compressor\n");
-            exit(1);
+            PrintError("Could not allocate libdeflate compressor");
+            exit(EXIT_FAILURE);
         }
         
         u08 magic[4] = {'p', 's', 't', 'm'};
@@ -1732,8 +1854,8 @@ CreateDXTTextures()
         u32 nCommpressedBytes;
         if (!(nCommpressedBytes = (u32)libdeflate_deflate_compress(compressor, (const void *)headerStart, nBytesHeader, (void *)compBuff, nBytesComp)))
         {
-            fprintf(stderr, "Could not compress file header info the given buffer\n");
-            exit(1);
+            PrintError("Could not compress file header info the given buffer");
+            exit(EXIT_FAILURE);
         }
 
         fwrite(magic, 1, sizeof(magic), Output_File);
@@ -1759,11 +1881,19 @@ MainArgs
 {
     if (ArgCount == 1)
     {
-        printf("%s\n\n", PretextMap_Version);
-        printf("(...samformat, ...pairsformat |) PretextMap -o output.pretext (--sortby ({length}, name, nosort) --sortorder ({descend}, ascend) --mapq {10}) (< samfile, pairsfile)\n\n");
-        printf("PretextMap --licence    <- view software licence\n");
-        printf("PretextMap --thirdparty <- view third party software used\n");
-        exit(0);
+        printf("\n%s\n\n", PretextMap_Version);
+        
+        printf(R"help(  (...samformat, ...pairsformat |)  PretextMap -o output.pretext
+                                                        (--sortby ({length}, name, nosort)
+                                                        --sortorder ({descend}, ascend)
+                                                        --mapq {10}
+                                                        --filterInclude "seq_ [, seq_]*"
+                                                        --filterExclude "seq_ [, seq_]*")
+  (< samfile, pairsfile))help");
+        
+        printf("\n\nPretextMap --licence    <- view software licence\n");
+        printf("PretextMap --thirdparty <- view third party software used\n\n");
+        exit(EXIT_SUCCESS);
     }
 
     if (ArgCount == 2)
@@ -1771,17 +1901,19 @@ MainArgs
         if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[1], (u08 *)"--licence"))
         {
             printf("%s\n", Licence);
-            exit(0);
+            exit(EXIT_SUCCESS);
         }
         
         if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[1], (u08 *)"--thirdparty"))
         {
             printf("%s\n", ThirdParty);
-            exit(0);
+            exit(EXIT_SUCCESS);
         }
     }
     
     u32 outputNameGiven = 0;
+    const char *filterIncludeString = 0;
+    const char *filterExcludeString = 0;
     for (   u32 index = 1;
             index < (u32)ArgCount;
             ++index )
@@ -1809,8 +1941,8 @@ MainArgs
             }
             else
             {
-                fprintf(stderr, "Invalid option for sortby: %s\n", ArgBuffer[index]);
-                exit(1);
+                PrintError("Invalid option for sortby: \'%s\'", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
             }
         }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--sortorder"))
@@ -1826,8 +1958,8 @@ MainArgs
             }
             else
             {
-                fprintf(stderr, "Invalid option for sortorder: %s\n", ArgBuffer[index]);
-                exit(1);
+                PrintError("Invalid option for sortorder: \'%s\'", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
             }
         }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--mapq"))
@@ -1840,27 +1972,38 @@ MainArgs
             }
             else
             {
-                fprintf(stderr, "Invalid option for mapq, not a non-negative int: %s\n", ArgBuffer[index]);
-                exit(1);
+                PrintError("Invalid option for mapq, not a non-negative int: \'%s\'", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
             }
+        }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--filterInclude"))
+        {
+            ++index;
+            filterIncludeString = ArgBuffer[index];
+        }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--filterExclude"))
+        {
+            ++index;
+            filterExcludeString = ArgBuffer[index];
         }
     }
 
     if (!outputNameGiven)
     {
-        fprintf(stderr, "Please provide an output file name (-o output.pretex)\n");
-        exit(1);
+        PrintError("Please provide an output file name (-o output.pretex)");
+        exit(EXIT_FAILURE);
     }
 
     InitialiseMutex(Working_Set_rwMutex);
-    Number_of_Threads = 3;
 
     CreateMemoryArena(Working_Set, GigaByte((u64)3));
-    Thread_Pool = ThreadPoolInit(&Working_Set, Number_of_Threads);
+    Thread_Pool = ThreadPoolInit(&Working_Set, 3);
 
     Line_Buffer_Queue = PushStruct(Working_Set, line_buffer_queue);
     InitialiseLineBufferQueue(&Working_Set, Line_Buffer_Queue);
     InitaliseImages();
+
+    CreateFilters(filterIncludeString, filterExcludeString);
 
     ThreadPoolAddTask(Thread_Pool, GrabStdIn, 0);
     ThreadPoolWait(Thread_Pool);
@@ -1886,17 +2029,17 @@ MainArgs
         }
     }
    
-    printf("Creating MipMaps...\n");
+    PrintStatus("Creating MipMaps...");
     ThreadPoolWait(Thread_Pool);
     ForLoop(Number_of_LODs)
     {
         ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
     }
-    printf("Equalising contrast...\n");
+    PrintStatus("Equalising contrast...");
     ThreadPoolWait(Thread_Pool);
     
     CreateDXTTextures();
-    printf("Compressing textures...\n");
+    PrintStatus("Compressing textures...");
 
     ThreadPoolWait(Thread_Pool);
     ThreadPoolDestroy(Thread_Pool);
