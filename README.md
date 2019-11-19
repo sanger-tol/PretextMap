@@ -9,10 +9,13 @@ Data is read from stdin over a unix pipe, eliminating the need for any intermidi
 PretextMap comes with no imposed pipeline for processing data. Process your alignments however you want before feeding to PretextMap.
 
 # Usage
-Pipe SAM or pairs formatted read pairs to PretextMap e.g. samtools view -h file.bam | PretextMap, zcat file.paris.gz | PretextMap<br/>
+Pipe SAM or pairs formatted read pairs to PretextMap e.g.:<br/>
+samtools view -h file.bam | PretextMap<br/>
+zcat file.paris.gz | PretextMap<br/>
+
 Important: A SAM header with contig info must be present for SAM format (-h option for samtools).<br/>
+
 Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
-Note: 
 
 # Options
 -o specifies an output file (required)<br/>
