@@ -48,7 +48,7 @@ Prebuilt binaries now come in 5 different varieties: AVX2, AVX, SSE4.2, SSE4.1 a
 PretextMap uses the following third-party libraries:<br/>
     libdeflate (https://github.com/ebiggers/libdeflate)<br/>
     mpc (https://github.com/orangeduck/mpc)<br/>
-    stb_sprintf.h (https://github.com/nothings/stb/blob/master/stb_sprintf.h)
+    stb_sprintf.h (https://github.com/nothings/stb/blob/master/stb_sprintf.h)<br/>
     stb_dxt.h (https://github.com/nothings/stb/blob/master/stb_dxt.h)
 
 # Requirments, building via script (Mac and Linux only)
