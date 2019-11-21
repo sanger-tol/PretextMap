@@ -589,7 +589,10 @@ ProcessBodyLine(u08 *line)
     if ((nLinesTotal % StatusPrintEvery) == 0)
     {
         char buff[128];
-        
+        memset((void *)buff, ' ', 80);
+        buff[80] = 0;
+        printf("\r%s", buff);
+
         if (File_Type == sam)
             stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$d read pairs processed, %$d read pairs mapped", nLinesTotal, Total_Good_Reads);
         else
@@ -1687,7 +1690,7 @@ WriteTexturesToFile(texture_buffer *buffer)
     
     fwrite(&buffer->nCommpressedBytes, 1, 4, Output_File);
     fwrite(buffer->compressionBuffer, 1, buffer->nCommpressedBytes, Output_File);
-    printf("\r [PretextMap status] :: %3d/%3d (%1.2f%%) texture blocks written to disk...", Texture_Coordinate_Ptr + 1, Number_of_Texture_Blocks, 100.0 * (f64)((f32)(Texture_Coordinate_Ptr + 1) / (f32)Number_of_Texture_Blocks));
+    printf("\r[PretextMap status] :: %3d/%3d (%1.2f%%) texture blocks written to disk", Texture_Coordinate_Ptr + 1, Number_of_Texture_Blocks, 100.0 * (f64)((f32)(Texture_Coordinate_Ptr + 1) / (f32)Number_of_Texture_Blocks));
     fflush(stdout);
 
     AddTextureBufferToQueue(Texture_Buffer_Queue, buffer);
