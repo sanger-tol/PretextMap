@@ -8,6 +8,18 @@ Data is read from stdin over a unix pipe, eliminating the need for any intermidi
 
 PretextMap comes with no imposed pipeline for processing data. Process your alignments however you want before feeding to PretextMap.
 
+# Bioconda
+All commandline Pretext tools for Unix (Linux and Mac) are available on [bioconda](https://bioconda.github.io/).<br/>
+
+The full suite of Pretext tools can be installed with
+```sh
+> conda install pretext-suite
+```
+Or, just PretextMap can in installed with
+```sh
+> conda install pretextmap
+```
+
 # Usage
 Pipe SAM or pairs formatted read pairs to PretextMap e.g.:<br/>
 samtools view -h file.bam | PretextMap<br/>
