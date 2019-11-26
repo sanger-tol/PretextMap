@@ -15,7 +15,7 @@ The full suite of Pretext tools can be installed with
 ```sh
 > conda install pretext-suite
 ```
-Or, just PretextMap can in installed with
+Or, just PretextMap can be installed with
 ```sh
 > conda install pretextmap
 ```
