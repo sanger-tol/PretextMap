@@ -1,4 +1,5 @@
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/pretext-suite/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/pretextmap/badges/downloads.svg)](https://anaconda.org/bioconda/pretextmap)
 # PretextMap
 Paired REad TEXTure Mapper. Converts SAM or pairs formatted read pairs into genome contact maps. See https://github.com/4dn-dcic/pairix/blob/master/pairs_format_specification.md for pairs format specification.<br/>
 Pairs format supported by version 0.04 or later only.
