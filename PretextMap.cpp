@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.1.1"
+#define PretextMap_Version "PretextMap Version 0.1.2"
 
 #include "Header.h"
 #include <math.h>
