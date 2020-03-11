@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.1"
+#define PretextMap_Version "PretextMap Version 0.1.1"
 
 #include "Header.h"
 #include <math.h>
@@ -235,7 +235,8 @@ DecrementNumberHeaderLines()
 struct
 contig_preprocess_node
 {
-    u32 length;
+    u64 length;
+    u32 pad;
     u32 hashedName;
     u32 name[16];
     contig_preprocess_node *next;
@@ -244,8 +245,7 @@ contig_preprocess_node
 struct
 contig
 {
-    u32 length;
-    u32 pad;
+    u64 length;
     u64 previousCumulativeLength;
     u32 name[16];
 };
@@ -515,7 +515,7 @@ ProcessBodyLine(u08 *line)
 
         len = 0;
         while (*++line != '\t') ++len;
-        u32 relPos1 = StringToInt(line, len);
+        u64 relPos1 = StringToInt64(line, len);
 
         u32 mapq;
         if (File_Type == sam)
@@ -548,7 +548,7 @@ ProcessBodyLine(u08 *line)
 
             len = 0;
             while (*++line != '\t') ++len;
-            u32 relPos2 = StringToInt(line, len);
+            u64 relPos2 = StringToInt64(line, len);
 
             contig *cont = 0;
             ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont);
@@ -556,7 +556,7 @@ ProcessBodyLine(u08 *line)
             if (cont)
             {
                 u64 cummLen1 = cont->previousCumulativeLength;
-                u64 read1 = cummLen1 + (u64)relPos1;
+                u64 read1 = cummLen1 + relPos1;
 
                 u64 cummLen2 = 0;
                 if (sameContig)
@@ -576,7 +576,7 @@ ProcessBodyLine(u08 *line)
 
                 if (cont)
                 {
-                    u64 read2 = cummLen2 + (u64)relPos2;
+                    u64 read2 = cummLen2 + relPos2;
 
                     AddReadPairToImage(read1, read2);
 
@@ -798,11 +798,11 @@ ProcessHeaderLine(u08 *line)
         line += (File_Type == sam ? 4 : 1);
 
         u32 count = 1;
-        while (*++line != '\n')
+        while (*++line != '\n' && *line != '\t')
         {
             ++count;
         }
-        u32 length = StringToInt(line, count);
+        u64 length = StringToInt64(line, count);
         u32 hash = GetHashedContigName(buff32, ArrayCount(buff32));
 
         LockMutex(Working_Set_rwMutex);
@@ -891,7 +891,7 @@ FinishProcessingHeader()
             indexes[tmpIndex] = tmpIndex;
             ++tmpIndex;
 
-            Total_Genome_Length += (u64)node->length;
+            Total_Genome_Length += node->length;
         }
 
         u32 hist_[512];
@@ -899,7 +899,7 @@ FinishProcessingHeader()
         u32 *nextHist = hist + 256;
 
         for (   u32 countIndex = 0;
-                countIndex < (Sort_By == noSort ? 0 : (Sort_By == sortByLength ? 1 : (ArrayCount(First_Contig_Preprocess_Node->name))));
+                countIndex < (Sort_By == noSort ? 0 : (Sort_By == sortByLength ? 2 : (ArrayCount(First_Contig_Preprocess_Node->name))));
                 ++countIndex )
         {
             ForLoop(255)
@@ -909,7 +909,7 @@ FinishProcessingHeader()
 
             ForLoop(Number_of_Contigs)
             {
-                u32 val = Sort_By == sortByLength ? (*(nodes+indexes[index]))->length : (*(nodes+indexes[index]))->name[ArrayCount(First_Contig_Preprocess_Node->name) - 1 - countIndex];
+                u32 val = Sort_By == sortByLength ? (u32)(((*(nodes+indexes[index]))->length >> (32 * countIndex)) & 0xffffffff) : (*(nodes+indexes[index]))->name[ArrayCount(First_Contig_Preprocess_Node->name) - 1 - countIndex];
                 u32 histVal = Sort_Order == descend ? 255 - (val & 0xff) : (val & 0xff);
 
                 ++hist[histVal];
@@ -931,7 +931,7 @@ FinishProcessingHeader()
 
                 ForLoop(Number_of_Contigs)
                 {
-                    u32 val = Sort_By == sortByLength ? ((*(nodes+indexes[index]))->length >> shift) : ((*(nodes+indexes[index]))->name[ArrayCount(First_Contig_Preprocess_Node->name) - 1 - countIndex] >> shift);
+                    u32 val = Sort_By == sortByLength ? ((u32)(((*(nodes+indexes[index]))->length >> (32 * countIndex)) & 0xffffffff) >> shift) : ((*(nodes+indexes[index]))->name[ArrayCount(First_Contig_Preprocess_Node->name) - 1 - countIndex] >> shift);
                     u32 histVal = Sort_Order == descend ? 255 - (val & 0xff) : (val & 0xff);
                     u32 nextHistVal = Sort_Order == descend ? 255 - ((val >> 8) & 0xff): ((val >> 8) & 0xff);
 
@@ -959,7 +959,7 @@ FinishProcessingHeader()
 
             ForLoop(Number_of_Contigs)
             {
-                u32 val = Sort_By == sortByLength ? ((*(nodes+indexes[index]))->length >> 24) : ((*(nodes+indexes[index]))->name[ArrayCount(First_Contig_Preprocess_Node->name) - 1 - countIndex] >> 24);
+                u32 val = Sort_By == sortByLength ? ((u32)(((*(nodes+indexes[index]))->length >> (32 * countIndex)) & 0xffffffff) >> 24) : ((*(nodes+indexes[index]))->name[ArrayCount(First_Contig_Preprocess_Node->name) - 1 - countIndex] >> 24);
                 u32 histVal = Sort_Order == descend ? 255 - (val & 0xff) : (val & 0xff);
 
                 u32 newIndex = hist[histVal]++;
@@ -979,7 +979,7 @@ FinishProcessingHeader()
         }
 
         u32 **names = PushArray(Working_Set, u32*, Number_of_Contigs);
-        u32 *lengths = PushArray(Working_Set, u32, Number_of_Contigs);
+        u64 *lengths = PushArray(Working_Set, u64, Number_of_Contigs);
         u32 *hashes = PushArray(Working_Set, u32, Number_of_Contigs);
         ForLoop(Number_of_Contigs)
         {
@@ -999,7 +999,7 @@ FinishProcessingHeader()
         Contigs = PushArray(Working_Set, contig, Number_of_Contigs);
         ForLoop(Number_of_Contigs)
         {
-            u32 length = lengths[index];
+            u64 length = lengths[index];
             u32 *name = names[index];
 
             contig *cont = Contigs + index; 

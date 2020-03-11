@@ -842,6 +842,23 @@ StringToInt(u08 *stringEnd, u32 length)
     return(result);
 }
 
+global_function
+u64
+StringToInt64(u08 *stringEnd, u32 length)
+{
+    u64 result = 0;
+    u64 pow = 1;
+
+    while (--length > 0)
+    {
+	result += (u64)(*--stringEnd - '0') * pow;
+	pow *= 10;
+    }
+    result += (u64)(*--stringEnd - '0') * pow;
+
+    return(result);
+}
+
 inline
 string_to_int_result
 StringToInt(char *string)
