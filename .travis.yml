@@ -17,4 +17,3 @@ install:
   - ./install
 script:
   - ./PretextMap
-
