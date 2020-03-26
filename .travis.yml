@@ -16,4 +16,4 @@ install:
   - conda activate test-environment
   - ./install
 script:
-  - PretextMap
+  - ./PretextMap
