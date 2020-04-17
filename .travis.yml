@@ -1,7 +1,10 @@
-dist: bionic
+jobs:
+  include:
+    - os: linux
+      dist: bionic
+    - os: osx
+
 language: python
-before_install:
-- sudo apt-get update
 python:
 - '3.8'
 install:
@@ -32,5 +35,6 @@ deploy:
   prerelease: true
   on:
     tags: true
+    condition: $TRAVIS_OS_NAME = linux
 env:
   secure: iggg+mkQTGL6Lde6midJxHI61QReWAywgejsWglWpp6QENL61hqPxAjyStPOUPiK0u6K/JkZtXeyf99YHfOe6mepX9FqpGnAv1cqVa7kRymgmCy2yBh2Gh+RotWVu5I7boVpEY903OmhOgG024aZpJM1ckAmKG/5B9+o47Y84sqWFaquXNb9EScnSpStcZNq+JckUs5PDLZRyN7A0gdq7fdNMPvwyqPRd56/5DA8dFyowKmSnKwzN24LChMqEX/R4evY97MK4RFOPl1efZMVt7CrbB4N/dOWPzunIMVjUaj6XW5GSwUbVM44T2JJ+LA3KjBqt7PKqlnqw/o9R2qbn44apmJu5paGeICWp+PeF6ubr2egJVEPYg14vIP9Wr7GJqfOKSiWAZdw/L2LVvGd+VPpAn3M2kUhUMDLKyWsYAXD6uZ7Wdyy0YmoRttg/2U/9vxnUAW+DlYUrOAc0vT0SIzd7q0EQHPucqpzHxoVQANZ9EnZcZ171Bg+tnRVAPkjhjVefUxqZSc4XNf936wJXorBUHNPW28aB5p2JXiOk/9unKeOpTXI/I/KMauyq9mExUrS3dzv6+X98V2HO8mmSv1q1DGY6chzz0zlnnvIOJfJ5oVr42VhuwdygyCPWhxUxRI/fBM9qis742saZ/IVkrLnI2H8nlLyQG4dlK9h5Cc=
