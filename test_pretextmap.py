@@ -18,6 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import pytest
 import bz2
 import os
 from subprocess import Popen, PIPE, STDOUT, check_output
@@ -70,6 +71,8 @@ def pretextmap(bin, dir):
                         err=err.decode("utf-8", errors="ignore") if err else "<none>"
                     )
                 )
+                if process.returncode == -4:
+                    pytest.skip("SIGFPE: assuming extension is unsupported")
                 assert process.returncode == 0
 
             thread.join()
