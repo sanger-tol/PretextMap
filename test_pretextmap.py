@@ -70,7 +70,7 @@ def test_pretextmap_avx2(tmpdir):
 
 
 def test_pretextmap_avx(tmpdir):
-    pretextmap("./PretextMap.avx", tmpdir)
+    pretextmap("./PretextMap.avx", tmpdir, full_test=("linux" in sys.platform))
 
 
 def test_pretextmap_sse42(tmpdir):
