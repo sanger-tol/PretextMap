@@ -29,39 +29,49 @@ pretext_map = b"BZh91AY&SYg\xe65\xb1\x01W}\xff\xff\xff\xff\xff\xff\xff\xff\xff\x
 
 
 def pretextmap(bin, dir):
-    with Popen(bin, stdout=PIPE, stderr=STDOUT) as process:
-        process.communicate()
+    n_max = 3
+    n = 0
+    while True:
+        try:
+            with Popen(bin, stdout=PIPE, stderr=STDOUT) as process:
+                process.communicate()
 
-    read, write = os.pipe()
+            read, write = os.pipe()
 
-    def thread_fn():
-        with os.fdopen(write, "wb") as file:
-            file.write(bz2.decompress(sam))
+            def thread_fn():
+                with os.fdopen(write, "wb") as file:
+                    file.write(bz2.decompress(sam))
 
-    thread = Thread(target=thread_fn)
-    thread.start()
+            thread = Thread(target=thread_fn)
+            thread.start()
 
-    map_path = "test.map"
+            map_path = "test.map"
 
-    with Popen(
-        (bin + " -o " + map_path).split(),
-        stdout=PIPE,
-        stderr=STDOUT,
-        stdin=Popen(
-            "samtools view -h -".split(),
-            stdout=PIPE,
-            stderr=STDOUT,
-            stdin=read,
-            cwd=dir,
-        ).stdout,
-        cwd=dir,
-    ) as process:
-        process.communicate()
+            with Popen(
+                (bin + " -o " + map_path).split(),
+                stdout=PIPE,
+                stderr=STDOUT,
+                stdin=Popen(
+                    "samtools view -h -".split(),
+                    stdout=PIPE,
+                    stderr=STDOUT,
+                    stdin=read,
+                    cwd=dir,
+                ).stdout,
+                cwd=dir,
+            ) as process:
+                process.communicate()
 
-    thread.join()
+            thread.join()
 
-    with open(os.path.join(dir, map_path), "rb") as file:
-        assert file.read() == bz2.decompress(pretext_map)
+            with open(os.path.join(dir, map_path), "rb") as file:
+                assert file.read() == bz2.decompress(pretext_map)
+            return
+
+        except Exception as ex:
+            n += 1
+            if n == n_max:
+                raise ex
 
 
 def test_pretextmap(tmpdir):
