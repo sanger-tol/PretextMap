@@ -18,7 +18,7 @@ install:
 - if [ "$TRAVIS_OS_NAME" = "osx" ]; then export toolchain=clangxx_osx-64; fi
 - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export toolchain=gxx_linux-64; fi
 - conda create -q -n test-environment -c conda-forge -c bioconda -y python=3.8
-  clang=10 $toolchain make samtools=1.10 pytest
+  clang=9 $toolchain make samtools=1.10 pytest
 - conda activate test-environment
 - "./install"
 script:
