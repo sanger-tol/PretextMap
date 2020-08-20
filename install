@@ -156,6 +156,14 @@ if args.libmpc is None:
 
 print("Building PretextMap")
 
+if "LD" in os.environ:
+    os.symlink(os.environ["LD"], "ld")
+    args.compiler += " -B ./"
+    link_ld = True
+    print("Using linker " + os.environ["LD"])
+else:
+    link_ld = False
+
 nExts = len(buildExts)
 
 for i in range(nExts):
@@ -198,6 +206,9 @@ else:
 
     os.chdir("SIMDExtensionWrapper")
 
+    if link_ld:
+        os.symlink("../ld", "ld")
+
     flags = args.flags
     
     command = args.compiler + " SIMDExtensionWrapper.cpp " + flags + " -DProgramName=PretextMap -o PretextMap"
@@ -216,6 +227,9 @@ else:
         shutil.rmtree("SIMDExtensionWrapper")
     except OSError as e:
         raise SystemExit("Error: %s - %s.".format(e.filename, e.strerror))
+
+if link_ld:
+    os.remove("ld")
 
 print("Done")
 
