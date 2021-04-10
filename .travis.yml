@@ -32,7 +32,7 @@ before_deploy:
   release_notes
 - export release_name="PretextMap-"$(git describe --tags)
 - mkdir $release_name
-- cp -r $TRAVIS_BUILD_DIR/*.{cpp,h} $TRAVIS_BUILD_DIR/meson.build $TRAVIS_BUILD_DIR/wrapper $TRAVIS_BUILD_DIR/libdeflate $TRAVIS_BUILD_DIR/mpc $release_name/
+- cp -r $TRAVIS_BUILD_DIR/*.{cpp,h} $TRAVIS_BUILD_DIR/meson.build $TRAVIS_BUILD_DIR/wrapper $TRAVIS_BUILD_DIR/libdeflate $TRAVIS_BUILD_DIR/mpc $TRAVIS_BUILD_DIR/LICENSE $TRAVIS_BUILD_DIR/README.md $release_name/
 - tar -czf Source_with_Submodules.tar.gz $release_name
 deploy:
   edge: true
