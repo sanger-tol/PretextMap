@@ -55,13 +55,6 @@ Contact maps are saved in a compressed texture format (hence the name). Maps can
 # Requirments, running
 3G of RAM and 2 CPU cores
 
-# Windows, Mac and Linux Builds
-Prebuild binaries for Windows, Mac and Linux are available<br/>
-The Mac binary was build on MacOS 10.13.6<br/>
-The Linux binary was build on kernel 3.13<br/>
-The Windows binary was build on Windows 10, and should work on at least Windows 7<br/>
-Prebuilt binaries now come in 5 different varieties: AVX2, AVX, SSE4.2, SSE4.1 and no_extensions, along with a wrapper program. Just keep all the binaries on the same path and run the wrapper (PretextMap); the correct binary for your architecture will be executed.
-
 # Third-Party acknowledgements
 PretextMap uses the following third-party libraries:<br/>
 * [libdeflate](https://github.com/ebiggers/libdeflate)<br/>
@@ -80,4 +73,3 @@ meson compile
 meson test
 meson install
 ```
-note that [Samtools](http://www.htslib.org/) must be on your PATH for the tests to run
