@@ -64,32 +64,20 @@ Prebuilt binaries now come in 5 different varieties: AVX2, AVX, SSE4.2, SSE4.1 a
 
 # Third-Party acknowledgements
 PretextMap uses the following third-party libraries:<br/>
-    libdeflate (https://github.com/ebiggers/libdeflate)<br/>
-    mpc (https://github.com/orangeduck/mpc)<br/>
-    stb_sprintf.h (https://github.com/nothings/stb/blob/master/stb_sprintf.h)<br/>
-    stb_dxt.h (https://github.com/nothings/stb/blob/master/stb_dxt.h)
+* [libdeflate](https://github.com/ebiggers/libdeflate)<br/>
+* [mpc](https://github.com/orangeduck/mpc)<br/>
+* [stb_sprintf.h](https://github.com/nothings/stb/blob/master/stb_sprintf.h)<br/>
+* [stb_dxt.h](https://github.com/nothings/stb/blob/master/stb_dxt.h)
 
-# Requirments, building via script (Mac and Linux only)
-make<br/>
-python (2 or 3) to run the installation script<br/>
-clang or gcc to compile<br/>
-
-Tested on Ubuntu linux kernel 3.13 with clang-9, gcc-4.9, gcc-5.5, gcc-8.3<br/>
-Tested on MacOS 10.13.6 with clang-9, clang-10-apple<br/>
-
-PretextMap requires libdeflate (https://github.com/ebiggers/libdeflate). By default the install script will clone and build the libdeflate.a static library for compilation with PretextMap. You can specify your own version to the install script if you wish (you'll have to specify appropriate linking flags as well if you specify a shared library).  
-
-PretextMap requires mpc (https://github.com/orangeduck/mpc). By default the install script will clone and build the libmpc.a static library for compilation with PretextMap. You can specify your own version to the install script if you wish (you'll have to specify appropriate linking flags as well if you specify a shared library).
-
-run ./install to build (run ./install -h to see options)
-
-# Requirments, building on Windows
-Only recomended if the prebuilt binary doesn't work for you and you know how to compile executables for Windows.<br/>
-
-Tested on Windows 10 using the Visual Studio 2019 toolchain<br/>
-Tested with Microsoft cl and clang-9<br/>
-
-Requires libdeflate (https://github.com/ebiggers/libdeflate)<br/>
-Requires mpc (https://github.com/orangeduck/mpc)<br/>
-
-Compile PretextMap.cpp and link against libdeflate and libmpc<br/>
+# Installation
+Requires:
+* clang >= 11.0.0
+* meson >= 0.57.1
+```bash
+env CXX=clang meson setup --buildtype=release --unity on --prefix=<installation prefix> builddir
+cd builddir
+meson compile
+meson test
+meson install
+```
+note that [Samtools](http://www.htslib.org/) must be on your PATH for the tests to run
