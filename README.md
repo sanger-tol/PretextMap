@@ -64,10 +64,10 @@ PretextMap uses the following third-party libraries:<br/>
 
 # Installation
 Requires:
-git submodule update --init --recursive
 * clang >= 11.0.0
 * meson >= 0.57.1
 ```bash
+git submodule update --init --recursive
 env CXX=clang meson setup --buildtype=release --unity on --prefix=<installation prefix> builddir
 cd builddir
 meson compile

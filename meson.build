@@ -1,4 +1,4 @@
-project('SamHaplotag', ['c', 'cpp'],
+project('PretextMap', ['c', 'cpp'],
     license: 'MIT',
     meson_version: '>=0.57.1',
     version: '0.1.5'
