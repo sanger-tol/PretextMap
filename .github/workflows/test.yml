@@ -11,7 +11,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
     - uses: actions/checkout@v2
-      submodules: 'recursive'
+      with:
+        submodules: 'recursive'
 
     - name: setup_conda
       run: |
