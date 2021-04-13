@@ -18,6 +18,4 @@ foreach ext, flag : extensions
             static_library('mpc' + ext, 'mpc/mpc.c', c_args : flags)])
 endforeach
 
-e = executable('PretextMap', 'wrapper/SIMDExtensionWrapper.cpp', install : true, cpp_args : base_flags + ['-DProgramName=PretextMap'])
-
-test('Test', e)
+test('Test', executable('PretextMap', 'wrapper/SIMDExtensionWrapper.cpp', install : true, cpp_args : base_flags + ['-DProgramName=PretextMap']))
