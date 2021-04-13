@@ -11,6 +11,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
     - uses: actions/checkout@v2
+      submodules: 'recursive'
+
     - name: setup_conda
       run: |
         if [ `uname` == Darwin ]; then
