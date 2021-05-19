@@ -1,7 +1,7 @@
 project('PretextMap', ['c', 'cpp'],
     license: 'MIT',
     meson_version: '>=0.57.1',
-    version: '0.1.6-dev'
+    version: '0.1.6'
 )
 
 deps = [dependency('threads')]
@@ -19,8 +19,8 @@ foreach ext, flag : extensions
     executable('PretextMap' + ext, 'PretextMap.cpp', dependencies : deps, install : true, cpp_args : flags, link_with : 
         [   static_library('deflate' + ext, 'libdeflate/lib/deflate_compress.c', 'libdeflate/lib/deflate_decompress.c', 'libdeflate/lib/utils.c', c_args : flags, link_with : 
             [   static_library('deflate_x86' + ext, 'libdeflate/lib/x86/cpu_features.c', c_args : flags),
-                static_library('deflate_arm' + ext, 'libdeflate/lib/arm/cpu_features.c', c_args : flags)]),
-            static_library('mpc' + ext, 'mpc/mpc.c', c_args : flags)])
+                static_library('deflate_arm' + ext, 'libdeflate/lib/arm/cpu_features.c', c_args : flags)], include_directories : 'libdeflate'),
+            static_library('mpc' + ext, 'mpc/mpc.c', c_args : flags)], include_directories : 'libdeflate')
 endforeach
 
 test('Test', executable('PretextMap', 'wrapper/SIMDExtensionWrapper.cpp', install : true, cpp_args : base_flags + ['-DProgramName=PretextMap']))
