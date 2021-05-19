@@ -34,6 +34,9 @@ SOFTWARE.
 #include <stdio.h>
 #include <string.h>
 
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #ifdef _WIN32
 #include <intrin.h>
 #else

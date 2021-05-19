@@ -20,7 +20,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define PretextMap_Version "PretextMap Version 0.1.5"
+#define String_(x) #x
+#define String(x) String_(x)
+#define PretextMap_Version "PretextMap Version " String(PV)
 
 #include "Header.h"
 #include <math.h>
@@ -197,14 +199,6 @@ thread_pool *
 Thread_Pool;
 
 #include "LineBufferQueue.cpp"
-
-global_variable
-threadSig
-Processing_Body_Thread = 0;
-
-global_variable
-u32
-Processing_Body = 0;
 
 global_variable
 threadSig
@@ -489,118 +483,128 @@ File_Type = undet;
 
 global_function
 void
-ProcessBodyLine(u08 *line)
+ProcessBodyLine(void *in)
 {
-    u64 nLinesTotal = __atomic_add_fetch(&Total_Reads_Processed, 1, 0);
+    line_buffer *buffer = (line_buffer *)in;
+    u08 *line = buffer->line;
     
-    while (*line++ != '\t') {}
-    u32 len = 1;
-    u32 flags;
-
-    if (File_Type == sam)
+    ForLoop(buffer->nLines)
     {
-        while (*++line != '\t') ++len;
-        flags = StringToInt(line, len);
-    }
-    else
-    {
-        --line;
-        flags = 0x1;
-    }
+        u64 nLinesTotal = __atomic_add_fetch(&Total_Reads_Processed, 1, 0);
 
-    if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
-    {
-        u32 contigName1[16];
-        line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), ++line, '\t');
+        while (*line++ != '\t') {}
+        u32 len = 1;
+        u32 flags;
 
-        len = 0;
-        while (*++line != '\t') ++len;
-        u64 relPos1 = StringToInt64(line, len);
-
-        u32 mapq;
         if (File_Type == sam)
         {
-            len = 0;
             while (*++line != '\t') ++len;
-            mapq = StringToInt(line, len);
+            flags = StringToInt(line, len);
         }
         else
         {
-            mapq = Min_Map_Quality;
+            --line;
+            flags = 0x1;
         }
 
-        if (mapq >= Min_Map_Quality)
+        if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
         {
-            if (File_Type == sam) while (*++line != '\t') {}
-            
-            u32 sameContig = 0;
-            u32 contigName2[16];
+            u32 contigName1[16];
+            line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), ++line, '\t');
 
-            if (*++line == '=')
+            len = 0;
+            while (*++line != '\t') ++len;
+            u64 relPos1 = StringToInt64(line, len);
+
+            u32 mapq;
+            if (File_Type == sam)
             {
-                sameContig = 1;
-                ++line;
+                len = 0;
+                while (*++line != '\t') ++len;
+                mapq = StringToInt(line, len);
             }
             else
             {
-                line = PushStringIntoIntArray(contigName2, ArrayCount(contigName2), line, '\t');
+                mapq = Min_Map_Quality;
             }
 
-            len = 0;
-            while (*++line != '\t') ++len;
-            u64 relPos2 = StringToInt64(line, len);
-
-            contig *cont = 0;
-            ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont);
-
-            if (cont)
+            if (mapq >= Min_Map_Quality)
             {
-                u64 cummLen1 = cont->previousCumulativeLength;
-                u64 read1 = cummLen1 + relPos1;
+                if (File_Type == sam) while (*++line != '\t') {}
 
-                u64 cummLen2 = 0;
-                if (sameContig)
+                u32 sameContig = 0;
+                u32 contigName2[16];
+
+                if (*++line == '=')
                 {
-                    cummLen2 = cummLen1;
+                    sameContig = 1;
+                    ++line;
                 }
                 else
                 {
-                    cont = 0;
-                    ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont);
-
-                    if (cont)
-                    {
-                        cummLen2 = cont->previousCumulativeLength;
-                    }
+                    line = PushStringIntoIntArray(contigName2, ArrayCount(contigName2), line, '\t');
                 }
+
+                len = 0;
+                while (*++line != '\t') ++len;
+                u64 relPos2 = StringToInt64(line, len);
+
+                contig *cont = 0;
+                ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont);
 
                 if (cont)
                 {
-                    u64 read2 = cummLen2 + relPos2;
+                    u64 cummLen1 = cont->previousCumulativeLength;
+                    u64 read1 = cummLen1 + relPos1;
 
-                    AddReadPairToImage(read1, read2);
+                    u64 cummLen2 = 0;
+                    if (sameContig)
+                    {
+                        cummLen2 = cummLen1;
+                    }
+                    else
+                    {
+                        cont = 0;
+                        ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont);
 
-                    __atomic_add_fetch(&Total_Good_Reads, 1, 0);
+                        if (cont)
+                        {
+                            cummLen2 = cont->previousCumulativeLength;
+                        }
+                    }
+
+                    if (cont)
+                    {
+                        u64 read2 = cummLen2 + relPos2;
+
+                        AddReadPairToImage(read1, read2);
+
+                        __atomic_add_fetch(&Total_Good_Reads, 1, 0);
+                    }
                 }
             }
         }
+
+        if ((nLinesTotal % StatusPrintEvery) == 0)
+        {
+            char buff[128];
+            memset((void *)buff, ' ', 80);
+            buff[80] = 0;
+            printf("\r%s", buff);
+
+            if (File_Type == sam)
+                stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u reads processed, %$u read-pairs mapped", nLinesTotal, Total_Good_Reads);
+            else
+                stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u read-pairs mapped", nLinesTotal);
+
+            printf("\r%s", buff);
+            fflush(stdout);
+        }
+
+        while (*line++ != '\n') {}
     }
 
-    if ((nLinesTotal % StatusPrintEvery) == 0)
-    {
-        char buff[128];
-        memset((void *)buff, ' ', 80);
-        buff[80] = 0;
-        printf("\r%s", buff);
-
-        if (File_Type == sam)
-            stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$d read pairs processed, %$d read pairs mapped", nLinesTotal, Total_Good_Reads);
-        else
-            stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$d read pairs mapped", nLinesTotal);
-
-        printf("\r%s", buff);
-        fflush(stdout);
-    }
+    AddLineBufferToQueue(Line_Buffer_Queue, buffer);
 }
 
 global_variable
@@ -1027,8 +1031,6 @@ FinishProcessingHeader()
         }
         FreeLastPush(Working_Set);
 
-        Processing_Body_Thread = 1;
-
         printf("[PretextMap status] :: Mapping to %d sequences, ", Number_of_Contigs);
         if (Sort_By == noSort)
         {
@@ -1065,130 +1067,175 @@ FinishProcessingHeader()
     }
 }
 
+struct
+read_buffer
+{
+    u08 *buffer;
+    u64 size;
+};
+
+struct
+read_pool
+{
+    thread_pool *pool;
+    s32 handle;
+    u32 bufferPtr;
+    read_buffer *buffers[2];
+};
+
+global_function
+read_pool *
+CreateReadPool(memory_arena *arena)
+{
+    read_pool *pool = PushStructP(arena, read_pool);
+    pool->pool = ThreadPoolInit(arena, 1);
+
+#define ReadBufferSize MegaByte(16)
+    pool->bufferPtr = 0;
+    pool->buffers[0] = PushStructP(arena, read_buffer);
+    pool->buffers[0]->buffer = PushArrayP(arena, u08, ReadBufferSize);
+    pool->buffers[0]->size = 0;
+    pool->buffers[1] = PushStructP(arena, read_buffer);
+    pool->buffers[1]->buffer = PushArrayP(arena, u08, ReadBufferSize);
+    pool->buffers[1]->size = 0;
+
+    return(pool);
+}
+
 global_function
 void
-ProcessLine(void *in)
+FillReadBuffer(void *in)
 {
-    line_buffer *buffer = (line_buffer *)in;
-    u08 *line = buffer->line;
-
-    if (Processing_Body)
-    {
-        ProcessBodyLine(line);
-    }
-    else if (Processing_Body_Thread)
-    {
-        Processing_Body = 1;
-        ProcessBodyLine(line);
-    }
-    else if (File_Type == sam && line[0] == '@')
-    {
-        if (line[1] == 'S')
-        {
-            ProcessHeaderLine(line);
-        }
-        else if (line[1] != 'H')
-        {
-            FinishProcessingHeader();
-        }
-    }
-    else if (File_Type == pairs && line[0] == '#')
-    {
-        if ((*((u64 *)((void *)line))) == 0x69736d6f72686323) // #chromsi
-        {
-            ProcessHeaderLine(line);
-        }
-    }
-    else
-    {
-        FinishProcessingHeader();
-        ThreadPoolAddTask(Thread_Pool, ProcessLine, in);
-        return;
-    }
-
-    AddLineBufferToQueue(Line_Buffer_Queue, buffer);
+    read_pool *pool = (read_pool *)in;
+    read_buffer *buffer = pool->buffers[pool->bufferPtr];
+    buffer->size = (u64)read(pool->handle, buffer->buffer, ReadBufferSize);
 }
+
+global_function
+read_buffer *
+GetNextReadBuffer(read_pool *readPool)
+{
+    FenceIn(ThreadPoolWait(readPool->pool));
+    read_buffer *buffer = readPool->buffers[readPool->bufferPtr];
+    readPool->bufferPtr = (readPool->bufferPtr + 1) & 1;
+    ThreadPoolAddTask(readPool->pool, FillReadBuffer, readPool);
+    return(buffer);
+}
+
+global_variable
+u08
+Global_Error_Flag = 0;
 
 global_function
 void
 GrabStdIn()
 {
-    line_buffer *buffer = 0;
+    line_buffer *buffer = TakeLineBufferFromQueue_Wait(Line_Buffer_Queue);
     u32 bufferPtr = 0;
-    s32 character;
-#ifdef ReadTest
-    FILE *testFile = fopen("test.in", "rb");
-    while ((character = getc(testFile)) != EOF)
+
+    read_pool *readPool = CreateReadPool(&Working_Set);
+    readPool->handle =
+#ifdef DEBUG
+    open("test_in", O_RDONLY);
 #else
-    while ((character = getchar()) != EOF)
+    STDIN_FILENO;
 #endif
+    
+    u08 samLine[KiloByte(16)];
+    u32 linePtr = 0;
+    u32 numLines = 0;
+    u08 headerMode = 1;
+    read_buffer *readBuffer = GetNextReadBuffer(readPool);
+
+    do
     {
-        if (!buffer) buffer = TakeLineBufferFromQueue_Wait(Line_Buffer_Queue);
-        buffer->line[bufferPtr++] = (u08)character;
-
-        if (bufferPtr == Line_Buffer_Size && character != 10)
+        readBuffer = GetNextReadBuffer(readPool);
+        for (   u64 bufferIndex = 0;
+                bufferIndex < readBuffer->size;
+                ++bufferIndex )
         {
-            while ((character = getchar()) != 10) {}
-            buffer->line[bufferPtr-1] = (u08)character;
+            u08 character = readBuffer->buffer[bufferIndex];
+
+            samLine[linePtr++] = character;
+            if (linePtr == sizeof(samLine))
+            {
+                samLine[128] = 0;
+                PrintError("SAM line too long (> %u bytes): '%s...'", sizeof(samLine), (char *)samLine);
+                Global_Error_Flag = 1;
+                return;
+            }
+
+            if (character == '\n')
+            {
+                if (headerMode)
+                {
+                    u08 at = samLine[0] == '@';
+                    u08 hash = samLine[0] == '#';
+
+                    if ((File_Type == sam && !at) || (File_Type == pairs && !hash)) headerMode = 0;
+                    else if (File_Type == undet && !at && !hash) headerMode = 0;
+
+                    if (!headerMode) FinishProcessingHeader();
+                }
+                
+                if (headerMode)
+                {
+                    if (samLine[0] == '@' && samLine[1] == 'S')
+                    {
+                        if (File_Type != sam && File_Type != undet)
+                        {
+                            PrintError("Error, inconsistent file type");
+                            Global_Error_Flag = 1;
+                            return;
+                        }
+                        else if (File_Type == undet)
+                        {
+                            File_Type = sam;
+                        }
+
+                        IncramentNumberOfHeaderLines();
+                        ProcessHeaderLine(samLine);
+                    }
+                    else if ((*((u64 *)samLine)) == 0x69736d6f72686323) // #chromsi
+                    {
+                        if (File_Type != pairs && File_Type != undet)
+                        {
+                            PrintError("Error, inconsistent file type");
+                            Global_Error_Flag = 1;
+                            return;
+                        }
+                        else if (File_Type == undet)
+                        {
+                            File_Type = pairs;
+                        }
+
+                        IncramentNumberOfHeaderLines();
+                        ProcessHeaderLine(samLine);
+                    }
+                }
+                else
+                {
+                    if ((u64)linePtr > (Line_Buffer_Size - bufferPtr))
+                    {
+                        buffer->nLines = numLines;
+                        ThreadPoolAddTask(Thread_Pool, ProcessBodyLine, buffer);
+
+                        buffer = TakeLineBufferFromQueue_Wait(Line_Buffer_Queue);
+                        numLines = 0;
+                        bufferPtr = 0;
+                    }
+
+                    ForLoop(linePtr) buffer->line[bufferPtr++] = samLine[index];
+                    ++numLines;
+                }
+
+                linePtr = 0;
+            }
         }
+    } while (readBuffer->size);
 
-        if (character == 10)
-        {
-            if (Processing_Body)
-            {
-
-            }
-            else if (Processing_Body_Thread)
-            {
-                Processing_Body = 1;
-            }
-            else if (buffer->line[0] == '@' && buffer->line[1] == 'S')
-            {
-                if (File_Type != sam && File_Type != undet)
-                {
-                    PrintError("Error, inconsistent file type");
-                    break;
-                }
-                else if (File_Type == undet)
-                {
-                    File_Type = sam;
-                }
-
-                IncramentNumberOfHeaderLines();
-            }
-            else if ((*((u64 *)buffer->line)) == 0x69736d6f72686323) // #chromsi
-            {
-                if (File_Type != pairs && File_Type != undet)
-                {
-                    PrintError("Error, inconsistent file type");
-                    break;
-                }
-                else if (File_Type == undet)
-                {
-                    File_Type = pairs;
-                }
-
-                IncramentNumberOfHeaderLines();
-            }
-
-            switch (File_Type)
-            {
-                case undet:
-                    AddLineBufferToQueue(Line_Buffer_Queue, buffer);
-                    break;
-
-                case sam:
-                case pairs:
-                    ThreadPoolAddTask(Thread_Pool, ProcessLine, (void *)buffer);
-            }
-
-            buffer = 0;
-            bufferPtr = 0;
-        }
-    }
-#ifdef ReadTest
-    fclose(testFile);
-#endif
+    buffer->nLines = numLines;
+    ThreadPoolAddTask(Thread_Pool, ProcessBodyLine, buffer);
 }
 
 global_function
@@ -2011,6 +2058,7 @@ MainArgs
     ThreadPoolAddTask(Thread_Pool, GrabStdIn, 0);
     ThreadPoolWait(Thread_Pool);
     printf("\n");
+    if (Global_Error_Flag) exit(EXIT_FAILURE);
 
     MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, Number_of_LODs - 1);
     u32 mipMapLevels[Number_of_LODs];

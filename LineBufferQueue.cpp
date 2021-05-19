@@ -20,15 +20,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#define Line_Buffer_Size 972
-#define Number_Of_Line_Buffers_Per_Queue 32
-#define Number_Of_Line_Buffer_Queues 32
+#define Line_Buffer_Size MegaByte(1)
+#define Number_Of_Line_Buffers_Per_Queue 2
+#define Number_Of_Line_Buffer_Queues 16
 
 struct
 line_buffer
 {
     u08 line[Line_Buffer_Size];
     u32 homeIndex;
+    u32 nLines;
     line_buffer *prev;
 };
 
