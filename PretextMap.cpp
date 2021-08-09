@@ -1017,7 +1017,7 @@ FinishProcessingHeader()
         }
 
         Contig_Hash_Table = PushArray(Working_Set, contig_hash_table_node*, Contig_Hash_Table_Size);
-        u32 *tmpHashes = PushArray(Working_Set, u32, Number_of_Contigs);
+        u32 *tmpHashes = PushArray(Working_Set, u32, 3 * Number_of_Contigs);
         ForLoop(Number_of_Contigs)
         {
             tmpHashes[index] = hashes[index];
