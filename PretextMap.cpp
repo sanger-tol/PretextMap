@@ -997,7 +997,7 @@ FinishProcessingHeader()
             }
         }
 
-        RestoreMemoryArenaFromSnapshot(&Working_Set, (memory_arena_snapshot *)&Contig_Preprocess_SnapShot);
+        //RestoreMemoryArenaFromSnapshot(&Working_Set, (memory_arena_snapshot *)&Contig_Preprocess_SnapShot);
 
         u64 cummLength = 0;
         Contigs = PushArray(Working_Set, contig, Number_of_Contigs);
