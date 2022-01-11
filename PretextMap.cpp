@@ -385,7 +385,7 @@ global_variable
 u32
 Min_Map_Quality = 10;
 
-#define Max_Image_Depth 15
+#define Max_Image_Depth 16
 #define Min_Image_Depth 10
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
 #define Pixel_Resolution(depth) (1 << (depth))
@@ -2046,7 +2046,7 @@ MainArgs
 
     InitialiseMutex(Working_Set_rwMutex);
 
-    CreateMemoryArena(Working_Set, GigaByte((u64)3));
+    CreateMemoryArena(Working_Set, GigaByte((u64)16));
     Thread_Pool = ThreadPoolInit(&Working_Set, 3);
 
     Line_Buffer_Queue = PushStruct(Working_Set, line_buffer_queue);
