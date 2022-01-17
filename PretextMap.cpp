@@ -385,7 +385,10 @@ global_variable
 u32
 Min_Map_Quality = 10;
 
-#define Max_Image_Depth 16
+global_variable
+u32
+Max_Image_Depth = 15;
+
 #define Min_Image_Depth 10
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
 #define Pixel_Resolution(depth) (1 << (depth))
@@ -1705,7 +1708,9 @@ ContrastEqualisation(void *in)
 
 #include "TextureBufferQueue.cpp"
 
-#define Single_Texture_Resolution 10
+global_variable
+u32
+Single_Texture_Resolution = 10;
 
 global_variable
 texture_buffer_queue *
@@ -1939,6 +1944,7 @@ MainArgs
                                                         --mapq {10}
                                                         --filterInclude "seq_ [, seq_]*"
                                                         --filterExclude "seq_ [, seq_]*")
+                                                        {--highRes}
   (< samfile, pairsfile))help");
         
         printf("\n\nPretextMap --licence    <- view software licence\n");
@@ -1961,6 +1967,7 @@ MainArgs
         }
     }
     
+    u08 highRes = 0;
     u32 outputNameGiven = 0;
     const char *filterIncludeString = 0;
     const char *filterExcludeString = 0;
@@ -2036,6 +2043,10 @@ MainArgs
             ++index;
             filterExcludeString = ArgBuffer[index];
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--highRes"))
+        {
+            highRes = 1;
+        }
     }
 
     if (!outputNameGiven)
@@ -2046,8 +2057,15 @@ MainArgs
 
     InitialiseMutex(Working_Set_rwMutex);
 
-    CreateMemoryArena(Working_Set, GigaByte((u64)16));
+    CreateMemoryArena(Working_Set, GigaByte((u64)(highRes ? 16 : 3)));
     Thread_Pool = ThreadPoolInit(&Working_Set, 3);
+
+    if (highRes)
+    {
+        Max_Image_Depth = 16;
+        Single_Texture_Resolution = 11;
+        PrintStatus("Running in high resolution mode");
+    }
 
     Line_Buffer_Queue = PushStruct(Working_Set, line_buffer_queue);
     InitialiseLineBufferQueue(&Working_Set, Line_Buffer_Queue);
