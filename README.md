@@ -39,7 +39,7 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --mapq sets a minimum mapping quality filter (default: 10)<br/>
 
 example:<br/>
-```
+```sh
 > samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descent --mapq 10
 ```
 
@@ -48,7 +48,7 @@ example:<br/>
 * --filterExclude: a comma separated list of sequence names, these sequence will be excluded<br/>
 
 example:<br/>
-```
+```sh
 > samtools view -h file.bam seq_1 seq_2 | PretextMap -o map.pretext --filterInclude "seq_1, seq_2"
 ```
 
