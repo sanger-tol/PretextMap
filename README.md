@@ -52,11 +52,11 @@ example:<br/>
 > samtools view -h file.bam seq_1 seq_2 | PretextMap -o map.pretext --filterInclude "seq_1, seq_2"
 ```
 
-## New option, version 0.1.9:<br/>
-* --highRes: high resolution output, only supported by PretextView >=0.2.5
-
 Filtering will increase the map resolution, since you're mapping less sequence into a fixed number of bins.<br/>
 Note: also filtering with samtools view as in the above example (... seq_1 seq_2) is not nessesary, but is recommended purely for speed (provided your bam file is sorted and indexed).
+
+## New option, version 0.1.9:<br/>
+* --highRes: high resolution output, only supported by PretextView >=0.2.5
 
 # Map Format
 Contact maps are saved in a compressed texture format (hence the name). Maps can be read by PretextView (https://github.com/wtsi-hpag/PretextView). Expect pretext map files to take around 30 to 50 M of disk space each.
