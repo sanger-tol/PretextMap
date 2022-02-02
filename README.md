@@ -38,16 +38,22 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --sortorder ascend or descend (default: descend, no effect if sortby = nosort)<br/>
 * --mapq sets a minimum mapping quality filter (default: 10)<br/>
 
+example:<br/>
+```
+> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descent --mapq 10
+```
+
 ## New option, version 0.1:<br/>
 * --filterInclude: a comma separated list of sequence names, only these sequences will be included<br/>
 * --filterExclude: a comma separated list of sequence names, these sequence will be excluded<br/>
 
+example:<br/>
+```
+> samtools view -h file.bam seq_1 seq_2 | PretextMap -o map.pretext --filterInclude "seq_1, seq_2"
+```
+
 ## New option, version 0.1.9:<br/>
 * --highRes: high resolution output, only supported by PretextView >=0.2.5
-
-example: samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descent --mapq 10<br/>
-
-filtering example: samtools view -h file.bam seq_1 seq_2 | PretextMap -o map.pretext --filterInclude "seq_1, seq_2"<br/>
 
 Filtering will increase the map resolution, since you're mapping less sequence into a fixed number of bins.<br/>
 Note: also filtering with samtools view as in the above example (... seq_1 seq_2) is not nessesary, but is recommended purely for speed (provided your bam file is sorted and indexed).
