@@ -495,96 +495,50 @@ ProcessBodyLine(void *in)
     {
         u64 nLinesTotal = __atomic_add_fetch(&Total_Reads_Processed, 1, 0);
 
-        while (*line++ != '\t') {}
-        u32 len = 1;
-        u32 flags;
-
-        if (File_Type == sam)
-        {
-            while (*++line != '\t') ++len;
-            flags = StringToInt(line, len);
+        // Split line into fields
+        char* fields[32];
+        int nfields = 0;
+        char* saveptr;
+        char* token = strtok_r((char*)line, "\t\n", &saveptr);
+        while (token && nfields < 32) {
+            fields[nfields++] = token;
+            token = strtok_r(NULL, "\t\n", &saveptr);
         }
-        else
-        {
-            --line;
-            flags = 0x1;
+        if (col_chr1 < 0 || col_pos1 < 0 || col_chr2 < 0 || col_pos2 < 0) {
+            PrintError("Column indices not set. Did you provide a #columns: header?");
+            exit(EXIT_FAILURE);
         }
+        if (nfields <= Max(col_chr1, Max(col_pos1, Max(col_chr2, col_pos2)))) {
+            PrintError("Line does not have enough fields");
+            continue;
+        }
+        // Extract fields
+        char* chr1 = fields[col_chr1];
+        char* pos1 = fields[col_pos1];
+        char* chr2 = fields[col_chr2];
+        char* pos2 = fields[col_pos2];
 
-        if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
+        u32 contigName1[16];
+        PushStringIntoIntArray(contigName1, ArrayCount(contigName1), (u08*)chr1, '\0');
+        u64 relPos1 = StringToInt64((u08*)pos1 + strlen(pos1), strlen(pos1));
+        u32 contigName2[16];
+        PushStringIntoIntArray(contigName2, ArrayCount(contigName2), (u08*)chr2, '\0');
+        u64 relPos2 = StringToInt64((u08*)pos2 + strlen(pos2), strlen(pos2));
+
+        contig *cont = 0;
+        ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont);
+        if (cont)
         {
-            u32 contigName1[16];
-            line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), ++line, '\t');
-
-            len = 0;
-            while (*++line != '\t') ++len;
-            u64 relPos1 = StringToInt64(line, len);
-
-            u32 mapq;
-            if (File_Type == sam)
+            u64 cummLen1 = cont->previousCumulativeLength;
+            u64 read1 = cummLen1 + relPos1;
+            cont = 0;
+            ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont);
+            if (cont)
             {
-                len = 0;
-                while (*++line != '\t') ++len;
-                mapq = StringToInt(line, len);
-            }
-            else
-            {
-                mapq = Min_Map_Quality;
-            }
-
-            if (mapq >= Min_Map_Quality)
-            {
-                if (File_Type == sam) while (*++line != '\t') {}
-
-                u32 sameContig = 0;
-                u32 contigName2[16];
-
-                if (*++line == '=')
-                {
-                    sameContig = 1;
-                    ++line;
-                }
-                else
-                {
-                    line = PushStringIntoIntArray(contigName2, ArrayCount(contigName2), line, '\t');
-                }
-
-                len = 0;
-                while (*++line != '\t') ++len;
-                u64 relPos2 = StringToInt64(line, len);
-
-                contig *cont = 0;
-                ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont);
-
-                if (cont)
-                {
-                    u64 cummLen1 = cont->previousCumulativeLength;
-                    u64 read1 = cummLen1 + relPos1;
-
-                    u64 cummLen2 = 0;
-                    if (sameContig)
-                    {
-                        cummLen2 = cummLen1;
-                    }
-                    else
-                    {
-                        cont = 0;
-                        ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont);
-
-                        if (cont)
-                        {
-                            cummLen2 = cont->previousCumulativeLength;
-                        }
-                    }
-
-                    if (cont)
-                    {
-                        u64 read2 = cummLen2 + relPos2;
-
-                        AddReadPairToImage(read1, read2);
-
-                        __atomic_add_fetch(&Total_Good_Reads, 1, 0);
-                    }
-                }
+                u64 cummLen2 = cont->previousCumulativeLength;
+                u64 read2 = cummLen2 + relPos2;
+                AddReadPairToImage(read1, read2);
+                __atomic_add_fetch(&Total_Good_Reads, 1, 0);
             }
         }
 
@@ -594,16 +548,11 @@ ProcessBodyLine(void *in)
             memset((void *)buff, ' ', 80);
             buff[80] = 0;
             printf("\r%s", buff);
-
-            if (File_Type == sam)
-                stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u reads processed, %$u read-pairs mapped", nLinesTotal, Total_Good_Reads);
-            else
-                stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u read-pairs mapped", nLinesTotal);
-
+            stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u read-pairs mapped", nLinesTotal);
             printf("\r%s", buff);
             fflush(stdout);
         }
-
+        // Move to next line
         while (*line++ != '\n') {}
     }
 
@@ -1163,7 +1112,7 @@ GrabStdIn()
             if (linePtr == sizeof(samLine))
             {
                 samLine[128] = 0;
-                PrintError("SAM line too long (> %u bytes): '%s...'", sizeof(samLine), (char *)samLine);
+                PrintError("Line too long (> %u bytes): '%s...'", sizeof(samLine), (char *)samLine);
                 Global_Error_Flag = 1;
                 return;
             }
@@ -1172,48 +1121,28 @@ GrabStdIn()
             {
                 if (headerMode)
                 {
-                    u08 at = samLine[0] == '@';
                     u08 hash = samLine[0] == '#';
-
-                    if ((File_Type == sam && !at) || (File_Type == pairs && !hash)) headerMode = 0;
-                    else if (File_Type == undet && !at && !hash) headerMode = 0;
-
-                    if (!headerMode) FinishProcessingHeader();
+                    if (!hash) headerMode = 0;
                 }
                 
                 if (headerMode)
                 {
-                    if (samLine[0] == '@' && samLine[1] == 'S')
-                    {
-                        if (File_Type != sam && File_Type != undet)
-                        {
-                            PrintError("Error, inconsistent file type");
-                            Global_Error_Flag = 1;
-                            return;
+                    if (strncmp((char*)samLine, "#columns:", 9) == 0) {
+                        char* columns = (char*)samLine + 9;
+                        int col = 0;
+                        char* token = strtok(columns, " \t\n");
+                        while (token) {
+                            if (strcmp(token, "chr1") == 0) col_chr1 = col;
+                            else if (strcmp(token, "pos1") == 0) col_pos1 = col;
+                            else if (strcmp(token, "chr2") == 0) col_chr2 = col;
+                            else if (strcmp(token, "pos2") == 0) col_pos2 = col;
+                            col++;
+                            token = strtok(NULL, " \t\n");
                         }
-                        else if (File_Type == undet)
-                        {
-                            File_Type = sam;
+                        if (col_chr1 < 0 || col_pos1 < 0 || col_chr2 < 0 || col_pos2 < 0) {
+                            PrintError("Missing required columns in #columns header");
+                            exit(EXIT_FAILURE);
                         }
-
-                        IncramentNumberOfHeaderLines();
-                        ProcessHeaderLine(samLine);
-                    }
-                    else if ((*((u64 *)samLine)) == 0x69736d6f72686323) // #chromsi
-                    {
-                        if (File_Type != pairs && File_Type != undet)
-                        {
-                            PrintError("Error, inconsistent file type");
-                            Global_Error_Flag = 1;
-                            return;
-                        }
-                        else if (File_Type == undet)
-                        {
-                            File_Type = pairs;
-                        }
-
-                        IncramentNumberOfHeaderLines();
-                        ProcessHeaderLine(samLine);
                     }
                 }
                 else
