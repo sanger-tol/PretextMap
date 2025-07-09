@@ -96,10 +96,10 @@ typedef size_t memptr;
 #define SqrtHalf 0.7071067811865475244008443621048490392845
 
 #define ArrayCount(array) (sizeof(array) / sizeof(array[0]))
-#define ForLoop(n) for (u32 index = 0; index < (n); ++index)
-#define ForLoop2(n) for (u32 index2 = 0; index2 < (n); ++index2)
+#define ForLoop(n) for (u32 index = 0; index < (u32)(n); ++index)
+#define ForLoop2(n) for (u32 index2 = 0; index2 < (u32)(n); ++index2)
 #define ForLoopN(i, n) for (u32 i = 0; i < (n); ++i)
-#define TraverseLinkedList(startNode, type) for (type *(node) = (startNode); node; node = node->next)
+#define TraverseLinkedList(startNode, type) for (type *node = (startNode); node; node = node->next)
 
 #define ArgCount argc
 #define ArgBuffer argv
@@ -249,9 +249,8 @@ TakeMemoryArenaSnapshot(memory_arena *arena, memory_arena_snapshot *snapshot)
     snapshot->size = arena->currentSize;
 }
 
-global_function
-void
-RestoreMemoryArenaFromSnapshot(memory_arena *arena, memory_arena_snapshot *snapshot)
+global_function __attribute__((unused))
+void RestoreMemoryArenaFromSnapshot(memory_arena *arena, memory_arena_snapshot *snapshot)
 {
     arena->currentSize = snapshot->size;
 }
@@ -274,9 +273,8 @@ CreateMemoryArena_(memory_arena *arena, u64 size, u32 alignment_pow2 = Default_M
 #define CreateMemoryArena(arena, size, ...) CreateMemoryArena_(&arena, size, ##__VA_ARGS__)
 #define CreateMemoryArenaP(arena, size, ...) CreateMemoryArena_(arena, size, ##__VA_ARGS__)
 
-global_function
-void
-ResetMemoryArena_(memory_arena *arena)
+global_function __attribute__((unused))
+void ResetMemoryArena_(memory_arena *arena)
 {
     arena->currentSize = 0;
 }
@@ -284,9 +282,8 @@ ResetMemoryArena_(memory_arena *arena)
 #define ResetMemoryArena(arena) ResetMemoryArena_(&arena)
 #define ResetMemoryArenaP(arena) ResetMemoryArena_(arena)
 
-global_function
-void
-FreeMemoryArena_(memory_arena *arena)
+global_function __attribute__((unused))
+void FreeMemoryArena_(memory_arena *arena)
 {
     free(arena->base);
 }
@@ -304,9 +301,8 @@ GetAlignmentPadding(u64 base, u32 alignment_pow2)
     return(result);
 }
 
-global_function
-u32
-AlignUp(u32 x, u32 alignment_pow2)
+global_function __attribute__((unused))
+u32 AlignUp(u32 x, u32 alignment_pow2)
 {
     u32 alignment_m1 = Pow2(alignment_pow2) - 1;
     u32 result = (x + alignment_m1) & ~alignment_m1;
@@ -366,9 +362,8 @@ FreeLastPush_(memory_arena *arena)
 #define FreeLastPush(arena) FreeLastPush_(&arena)
 #define FreeLastPushP(arena) FreeLastPush_(arena)
 
-global_function
-memory_arena *
-PushSubArena_(memory_arena *mainArena, u64 size, u32 alignment_pow2 = Default_Memory_Alignment_Pow2)
+global_function __attribute__((unused))
+memory_arena* PushSubArena_(memory_arena *mainArena, u64 size, u32 alignment_pow2 = Default_Memory_Alignment_Pow2)
 {
     memory_arena *subArena = PushStructP(mainArena, memory_arena, alignment_pow2);
     subArena->base = PushArrayP(mainArena, u08, size, alignment_pow2);
@@ -778,9 +773,8 @@ AreNullTerminatedStringsEqual(u32 *string1, u32 *string2, u32 nInts) //TODO SIMD
     return(result);
 }
 
-global_function
-u32
-CopyNullTerminatedString(u08 *source, u08 *dest)
+global_function __attribute__((unused))
+u32 CopyNullTerminatedString(u08 *source, u08 *dest)
 {
 	u32 stringLength = 0;
 
@@ -910,9 +904,8 @@ StringToInt_Check(u08 *string, u32 *result)
     return(goodResult);
 }
 
-global_function
-u32
-IntDivideCeil(u32 x, u32 y)
+global_function __attribute__((unused))
+u32 IntDivideCeil(u32 x, u32 y)
 {
 	u32 result = (x + y - 1) / y;
 	return(result);

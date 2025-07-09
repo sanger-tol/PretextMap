@@ -47,17 +47,12 @@ single_texture_buffer_queue
     texture_buffer *rear;
 };
 
-struct
-texture_buffer_queue
+struct texture_buffer_queue
 {
     single_texture_buffer_queue **queues;
     threadSig index;
     u32 pad;
 };
-
-global_variable
-struct texture_buffer_queue *
-texture_Buffer_Queue;
 
 global_function
 void

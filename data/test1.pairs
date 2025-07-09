@@ -1,0 +1,7 @@
+## pairs format v1.0
+#chromsize: SUPER_1 128756846
+#chromsize: SUPER_2 74836083
+#chromsize: SUPER_3 60142340
+#columns: readID chr1 pos1 chr2 pos2 strand1 strand2
+read1	SUPER_1	10000	SUPER_2	20000	+	-
+read2	SUPER_3	15000	SUPER_3	25000	-	+
