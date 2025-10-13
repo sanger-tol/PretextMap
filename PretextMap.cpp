@@ -28,6 +28,7 @@ SOFTWARE.
 #include <math.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <zlib.h>
 
 global_variable
 u08
@@ -514,10 +515,13 @@ ProcessBodyLine(void *in)
     {
         u64 nLinesTotal = __atomic_add_fetch(&Total_Reads_Processed, 1, 0);
 
+        // Store start of current line for error reporting
+        u08 *lineStart = line;
+
         // Skip readID
         while (*line && *line != '\t') line++;
         if (!*line) {
-            PrintError("Malformed line - missing fields after readID");
+            PrintError("Malformed line - missing fields after readID at line %lu", nLinesTotal);
             Global_Error_Flag = 1;
             return;
         }
@@ -527,7 +531,7 @@ ProcessBodyLine(void *in)
         u32 contigName1[16] = {0};
         line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), line, '\t');
         if (!*line) {
-            PrintError("Malformed line - missing pos1");
+            PrintError("Malformed line - missing pos1 at line %lu", nLinesTotal);
             Global_Error_Flag = 1;
             return;
         }
@@ -541,7 +545,7 @@ ProcessBodyLine(void *in)
             pos1Len++;
         }
         if (!pos1Len || line[pos1Len] != '\t') {
-            PrintError("Malformed line - invalid pos1");
+            PrintError("Malformed line - invalid pos1 at line %lu", nLinesTotal);
             Global_Error_Flag = 1;
             return;
         }
@@ -550,10 +554,9 @@ ProcessBodyLine(void *in)
         char *endPtr;
         errno = 0;
         u64 relPos1 = strtoull(pos1Str, &endPtr, 10);
-        if (errno || *endPtr != '\0') {
-            PrintError("Invalid pos1 value: %s", pos1Str);
-            Global_Error_Flag = 1;
-            return;
+        if (errno || (*endPtr != '\0' && *endPtr != '\t' && *endPtr != '\n' && *endPtr != '\r')) {
+            PrintError("Invalid pos1 value: %s at line %lu", pos1Str, nLinesTotal);
+            continue; // Skip this line instead of exiting
         }
         line += pos1Len + 1; // Skip number and tab
 
@@ -561,7 +564,7 @@ ProcessBodyLine(void *in)
         u32 contigName2[16] = {0};
         line = PushStringIntoIntArray(contigName2, ArrayCount(contigName2), line, '\t');
         if (!*line) {
-            PrintError("Malformed line - missing pos2");
+            PrintError("Malformed line - missing pos2 at line %lu", nLinesTotal);
             Global_Error_Flag = 1;
             return;
         }
@@ -575,44 +578,42 @@ ProcessBodyLine(void *in)
             pos2Len++;
         }
         if (!pos2Len) {
-            PrintError("Malformed line - invalid pos2");
-            Global_Error_Flag = 1;
-            return;
+            PrintError("Malformed line - invalid pos2 at line %lu", nLinesTotal);
+            continue; // Skip this line instead of exiting
         }
         pos2Str[pos2Len] = '\0';
         
         errno = 0;
         u64 relPos2 = strtoull(pos2Str, &endPtr, 10);
-        if (errno || (*endPtr != '\0' && *endPtr != '\t' && *endPtr != '\n')) {
-            PrintError("Invalid pos2 value: %s", pos2Str);
-            Global_Error_Flag = 1;
-            return;
+        if (errno || (*endPtr != '\0' && *endPtr != '\t' && *endPtr != '\n' && *endPtr != '\r')) {
+            PrintError("Invalid pos2 value: %s at line %lu", pos2Str, nLinesTotal);
+            continue; // Skip this line instead of exiting
         }
 
-        // Skip remaining fields (strand1, strand2)
+        // Skip remaining fields (strand1, strand2, and any additional fields) until end of line
         while (*line && *line != '\n') line++;
         if (*line == '\n') line++;
 
         // Look up contigs and add to image
         contig *cont1 = 0;
         if (!ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont1)) {
-            PrintError("Unknown contig: %.64s", (char*)contigName1);
+            PrintError("Unknown contig: %.64s at line %lu", (char*)contigName1, nLinesTotal);
             continue;
         }
 
         contig *cont2 = 0;
         if (!ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont2)) {
-            PrintError("Unknown contig: %.64s", (char*)contigName2);
+            PrintError("Unknown contig: %.64s at line %lu", (char*)contigName2, nLinesTotal);
             continue;
         }
 
         // Validate positions
         if (relPos1 >= cont1->length) {
-            PrintError("Position %lu exceeds contig length %lu", relPos1, cont1->length);
+            PrintError("Position %lu exceeds contig length %lu for contig %.64s at line %lu", relPos1, cont1->length, (char*)contigName1, nLinesTotal);
             continue;
         }
         if (relPos2 >= cont2->length) {
-            PrintError("Position %lu exceeds contig length %lu", relPos2, cont2->length);
+            PrintError("Position %lu exceeds contig length %lu for contig %.64s at line %lu", relPos2, cont2->length, (char*)contigName2, nLinesTotal);
             continue;
         }
 
@@ -1246,6 +1247,8 @@ read_pool
     s32 handle;
     u32 bufferPtr;
     read_buffer *buffers[2];
+    gzFile gzHandle;  // For gzip files
+    u08 isGzip;       // Flag to indicate if file is gzip-compressed
 };
 
 global_function
@@ -1263,6 +1266,8 @@ CreateReadPool(memory_arena *arena)
     pool->buffers[1] = PushStructP(arena, read_buffer);
     pool->buffers[1]->buffer = PushArrayP(arena, u08, ReadBufferSize);
     pool->buffers[1]->size = 0;
+    pool->gzHandle = 0;
+    pool->isGzip = 0;
 
     return(pool);
 }
@@ -1274,29 +1279,47 @@ GetNextReadBuffer(read_pool *readPool)
     FenceIn(ThreadPoolWait(readPool->pool));
     read_buffer *buffer = readPool->buffers[readPool->bufferPtr];
     
-    // Check if file descriptor is valid
-    if (readPool->handle < 0) {
-        PrintError("Invalid file descriptor: %d", readPool->handle);
-        buffer->size = 0;
-        return buffer;
-    }
-
-    // Try to read from the file descriptor
-    ssize_t bytesRead = read(readPool->handle, buffer->buffer, ReadBufferSize);
-    if (bytesRead < 0) {
-        PrintError("Failed to read from input: %s (fd=%d)", strerror(errno), readPool->handle);
-        buffer->size = 0;
-    } else {
-        buffer->size = (u64)bytesRead;
+    ssize_t bytesRead = 0;
+    
+    if (readPool->isGzip) {
+        // Handle gzip file
+        if (!readPool->gzHandle) {
+            PrintError("Gzip handle is null");
+            buffer->size = 0;
+            return buffer;
+        }
         
-        // Debug first read
-        if (readPool->bufferPtr == 0) {
-            PrintStatus("First read: %ld bytes from fd %d", bytesRead, readPool->handle);
-            if (bytesRead > 0) {
-                PrintStatus("First byte: 0x%02X (%c)", 
-                    buffer->buffer[0], 
-                    (buffer->buffer[0] >= 32 && buffer->buffer[0] <= 126) ? buffer->buffer[0] : '?');
-            }
+        bytesRead = gzread(readPool->gzHandle, buffer->buffer, ReadBufferSize);
+        if (bytesRead < 0) {
+            PrintError("Failed to read from gzip file: %s", gzerror(readPool->gzHandle, 0));
+            buffer->size = 0;
+        } else {
+            buffer->size = (u64)bytesRead;
+        }
+    } else {
+        // Handle regular file
+        if (readPool->handle < 0) {
+            PrintError("Invalid file descriptor: %d", readPool->handle);
+            buffer->size = 0;
+            return buffer;
+        }
+
+        bytesRead = read(readPool->handle, buffer->buffer, ReadBufferSize);
+        if (bytesRead < 0) {
+            PrintError("Failed to read from input: %s (fd=%d)", strerror(errno), readPool->handle);
+            buffer->size = 0;
+        } else {
+            buffer->size = (u64)bytesRead;
+        }
+    }
+    
+    // Debug first read
+    if (readPool->bufferPtr == 0) {
+        PrintStatus("First read: %ld bytes from %s", bytesRead, readPool->isGzip ? "gzip file" : "regular file");
+        if (bytesRead > 0) {
+            PrintStatus("First byte: 0x%02X (%c)", 
+                buffer->buffer[0], 
+                (buffer->buffer[0] >= 32 && buffer->buffer[0] <= 126) ? buffer->buffer[0] : '?');
         }
     }
     
@@ -1305,12 +1328,22 @@ GetNextReadBuffer(read_pool *readPool)
     read_buffer *nextBuffer = readPool->buffers[readPool->bufferPtr];
     
     // Read into the next buffer
-    bytesRead = read(readPool->handle, nextBuffer->buffer, ReadBufferSize);
-    if (bytesRead < 0) {
-        PrintError("Failed to read from input: %s (fd=%d)", strerror(errno), readPool->handle);
-        nextBuffer->size = 0;
+    if (readPool->isGzip) {
+        bytesRead = gzread(readPool->gzHandle, nextBuffer->buffer, ReadBufferSize);
+        if (bytesRead < 0) {
+            PrintError("Failed to read from gzip file: %s", gzerror(readPool->gzHandle, 0));
+            nextBuffer->size = 0;
+        } else {
+            nextBuffer->size = (u64)bytesRead;
+        }
     } else {
-        nextBuffer->size = (u64)bytesRead;
+        bytesRead = read(readPool->handle, nextBuffer->buffer, ReadBufferSize);
+        if (bytesRead < 0) {
+            PrintError("Failed to read from input: %s (fd=%d)", strerror(errno), readPool->handle);
+            nextBuffer->size = 0;
+        } else {
+            nextBuffer->size = (u64)bytesRead;
+        }
     }
     
     return buffer;
@@ -1323,13 +1356,26 @@ FillReadBuffer(void *in)
     read_pool *pool = (read_pool *)in;
     read_buffer *buffer = pool->buffers[pool->bufferPtr];
     
-    // Try to read from the file descriptor
-    ssize_t bytesRead = read(pool->handle, buffer->buffer, ReadBufferSize);
-    if (bytesRead < 0) {
-        PrintError("Failed to read from input: %s", strerror(errno));
-        buffer->size = 0;
+    ssize_t bytesRead = 0;
+    
+    if (pool->isGzip) {
+        // Handle gzip file
+        bytesRead = gzread(pool->gzHandle, buffer->buffer, ReadBufferSize);
+        if (bytesRead < 0) {
+            PrintError("Failed to read from gzip file: %s", gzerror(pool->gzHandle, 0));
+            buffer->size = 0;
+        } else {
+            buffer->size = (u64)bytesRead;
+        }
     } else {
-        buffer->size = (u64)bytesRead;
+        // Handle regular file
+        bytesRead = read(pool->handle, buffer->buffer, ReadBufferSize);
+        if (bytesRead < 0) {
+            PrintError("Failed to read from input: %s", strerror(errno));
+            buffer->size = 0;
+        } else {
+            buffer->size = (u64)bytesRead;
+        }
     }
 }
 
@@ -1366,6 +1412,32 @@ GrabStdIn()
 #else
     readPool->handle = STDIN_FILENO;
 #endif
+
+    // Check if input is gzip-compressed by reading first few bytes
+    u08 magic[2];
+    ssize_t bytesRead = read(readPool->handle, magic, 2);
+    if (bytesRead == 2 && magic[0] == 0x1F && magic[1] == 0x8B) {
+        // This is a gzip file
+        PrintStatus("Detected gzip-compressed input");
+        readPool->isGzip = 1;
+        
+        // Reset file position to beginning for gzip
+        lseek(readPool->handle, 0, SEEK_SET);
+        
+        // Create gzip handle from the file descriptor
+        readPool->gzHandle = gzdopen(readPool->handle, "rb");
+        if (!readPool->gzHandle) {
+            PrintError("Failed to open gzip file: %s", strerror(errno));
+            Global_Error_Flag = 1;
+            return;
+        }
+    } else {
+        // Regular file, reset position
+        if (bytesRead > 0) {
+            lseek(readPool->handle, 0, SEEK_SET);
+        }
+        readPool->isGzip = 0;
+    }
 
     // Debug stdin status
     struct stat st;
@@ -1508,6 +1580,12 @@ GrabStdIn()
                                 File_Type = pairs;
                                 PrintStatus("Detected pairs format input v1.0");
                             }
+                            else if (strncmp((char*)samLine, "#columns:", 9) == 0)
+                            {
+                                // If we see a columns line, assume it's pairs format
+                                File_Type = pairs;
+                                PrintStatus("Detected pairs format input (via columns line)");
+                            }
                         }
                         else
                         {
@@ -1602,6 +1680,15 @@ GrabStdIn()
         }
 
         readBuffer = GetNextReadBuffer(readPool);
+        
+        // For gzip files, check if we've reached end of file
+        if (readPool->isGzip && readBuffer && readBuffer->size == 0) {
+            // Check if gzip file is at end
+            if (gzeof(readPool->gzHandle)) {
+                PrintStatus("Reached end of gzip file");
+                break;
+            }
+        }
     } while (readBuffer && readBuffer->size);
 
     // Process any remaining lines
