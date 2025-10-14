@@ -40,7 +40,7 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 
 example:<br/>
 ```sh
-> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descent --mapq 10
+> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend --mapq 10
 ```
 
 ## New option, version 0.1:<br/>
