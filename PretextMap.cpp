@@ -596,22 +596,24 @@ ProcessBodyLine(void *in)
         // Look up contigs and add to image
         contig *cont1 = 0;
         if (!ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont1)) {
-            PrintError("Unknown contig: %.64s", (char*)contigName1);
+            if (*(char*)contigName1 != '!') // suppress error for '!' contig
+                PrintError("Unknown contig: %.64s", (char*)contigName1);
             continue;
         }
 
         contig *cont2 = 0;
         if (!ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont2)) {
-            PrintError("Unknown contig: %.64s", (char*)contigName2);
+            if (*(char*)contigName2 != '!') // suppress error for '!' contig
+                PrintError("Unknown contig: %.64s", (char*)contigName2);
             continue;
         }
 
         // Validate positions
-        if (relPos1 >= cont1->length) {
+        if (relPos1 > cont1->length) {
             PrintError("Position %lu exceeds contig length %lu", relPos1, cont1->length);
             continue;
         }
-        if (relPos2 >= cont2->length) {
+        if (relPos2 > cont2->length) {
             PrintError("Position %lu exceeds contig length %lu", relPos2, cont2->length);
             continue;
         }
@@ -1268,61 +1270,19 @@ CreateReadPool(memory_arena *arena)
 }
 
 global_function
-read_buffer *
-GetNextReadBuffer(read_pool *readPool)
-{
-    FenceIn(ThreadPoolWait(readPool->pool));
-    read_buffer *buffer = readPool->buffers[readPool->bufferPtr];
-    
-    // Check if file descriptor is valid
-    if (readPool->handle < 0) {
-        PrintError("Invalid file descriptor: %d", readPool->handle);
-        buffer->size = 0;
-        return buffer;
-    }
-
-    // Try to read from the file descriptor
-    ssize_t bytesRead = read(readPool->handle, buffer->buffer, ReadBufferSize);
-    if (bytesRead < 0) {
-        PrintError("Failed to read from input: %s (fd=%d)", strerror(errno), readPool->handle);
-        buffer->size = 0;
-    } else {
-        buffer->size = (u64)bytesRead;
-        
-        // Debug first read
-        if (readPool->bufferPtr == 0) {
-            PrintStatus("First read: %ld bytes from fd %d", bytesRead, readPool->handle);
-            if (bytesRead > 0) {
-                PrintStatus("First byte: 0x%02X (%c)", 
-                    buffer->buffer[0], 
-                    (buffer->buffer[0] >= 32 && buffer->buffer[0] <= 126) ? buffer->buffer[0] : '?');
-            }
-        }
-    }
-    
-    // Switch buffers and read into the next one
-    readPool->bufferPtr = (readPool->bufferPtr + 1) & 1;
-    read_buffer *nextBuffer = readPool->buffers[readPool->bufferPtr];
-    
-    // Read into the next buffer
-    bytesRead = read(readPool->handle, nextBuffer->buffer, ReadBufferSize);
-    if (bytesRead < 0) {
-        PrintError("Failed to read from input: %s (fd=%d)", strerror(errno), readPool->handle);
-        nextBuffer->size = 0;
-    } else {
-        nextBuffer->size = (u64)bytesRead;
-    }
-    
-    return buffer;
-}
-
-global_function
 void
 FillReadBuffer(void *in)
 {
     read_pool *pool = (read_pool *)in;
     read_buffer *buffer = pool->buffers[pool->bufferPtr];
     
+    // Check if file descriptor is valid
+    if (pool->handle < 0) {
+        PrintError("Invalid file descriptor: %d", pool->handle);
+        buffer->size = 0;
+        return;
+    }
+
     // Try to read from the file descriptor
     ssize_t bytesRead = read(pool->handle, buffer->buffer, ReadBufferSize);
     if (bytesRead < 0) {
@@ -1331,6 +1291,17 @@ FillReadBuffer(void *in)
     } else {
         buffer->size = (u64)bytesRead;
     }
+}
+
+global_function
+read_buffer *
+GetNextReadBuffer(read_pool *readPool)
+{
+    FenceIn(ThreadPoolWait(readPool->pool));
+    read_buffer *buffer = readPool->buffers[readPool->bufferPtr];
+    readPool->bufferPtr = (readPool->bufferPtr + 1) & 1;
+    ThreadPoolAddTask(readPool->pool, FillReadBuffer, readPool);
+    return buffer;
 }
 
 #define SAM_LINE_BUFFER_SIZE KiloByte(16)
@@ -1396,6 +1367,7 @@ GrabStdIn()
 
     // Try to read first buffer
     readBuffer = GetNextReadBuffer(readPool);
+    /***
     if (!readBuffer || readBuffer->size == 0) {
         PrintError("No input data received");
         Global_Error_Flag = 1;
@@ -1403,7 +1375,7 @@ GrabStdIn()
     }
 
     PrintStatus("Initial buffer size: %lu bytes", readBuffer->size);
-
+    **/
     do
     {
         if (!readBuffer || readBuffer->size == 0) {
