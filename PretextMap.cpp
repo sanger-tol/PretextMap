@@ -1,5 +1,7 @@
 /*
 Copyright (c) 2019 Ed Harry, Wellcome Sanger Institute
+Copyright (c) 2026 Chenxi Zhou <chnx.zhou@gmail.com>
+Copyright (c) 2026 Ying Sims <yy5@sanger.ac.uk> 
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
