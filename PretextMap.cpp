@@ -551,9 +551,11 @@ ProcessBodyLine(void *in)
         errno = 0;
         u64 relPos1 = strtoull(pos1Str, &endPtr, 10);
         if (errno || *endPtr != '\0') {
-            PrintError("Invalid pos1 value: %s", pos1Str);
-            Global_Error_Flag = 1;
-            return;
+            PrintError("Invalid pos1 value: %s (expected numeric position, got non-numeric value). Skipping line.", pos1Str);
+            // Skip to next line instead of stopping
+            while (*line && *line != '\n') line++;
+            if (*line == '\n') line++;
+            continue;
         }
         line += pos1Len + 1; // Skip number and tab
 
@@ -584,9 +586,11 @@ ProcessBodyLine(void *in)
         errno = 0;
         u64 relPos2 = strtoull(pos2Str, &endPtr, 10);
         if (errno || (*endPtr != '\0' && *endPtr != '\t' && *endPtr != '\n')) {
-            PrintError("Invalid pos2 value: %s", pos2Str);
-            Global_Error_Flag = 1;
-            return;
+            PrintError("Invalid pos2 value: %s (expected numeric position, got non-numeric value like CIGAR string). Skipping line. Check that pos2 is at field 5 (after readID, chr1, pos1, chr2).", pos2Str);
+            // Skip to next line instead of stopping
+            while (*line && *line != '\n') line++;
+            if (*line == '\n') line++;
+            continue;
         }
 
         // Skip remaining fields (strand1, strand2)
@@ -815,10 +819,19 @@ ProcessHeaderLine(u08 *line)
     }
     fprintf(stdout, "\n");
 
-    // Skip format declaration and columns lines
+    // Skip format declaration, columns, and samheader lines
+    // The #columns line is purely informational and is skipped entirely.
+    // Accepts any number of columns, space-separated or tab-separated:
+    //   #columns: readID chr1 pos1 chr2 pos2 strand1 strand2
+    //   #columns:\treadID\tchr1\tpos1\tchr2\tpos2\tstrand1\tstrand2
+    //   #columns: readID chrom1 pos1 chrom2 pos2 strand1 strand2 ... (extended format)
+    // Note: Column names don't need to match exactly - data parsing is position-based.
+    // Data lines must be tab-separated with fields in order: readID, chr1, pos1, chr2, pos2, ...
+    // The #samheader line contains SAM header information and is also skipped.
     if (strncmp((char*)line, "## pairs format", 14) == 0 ||
-        strncmp((char*)line, "#columns:", 9) == 0) {
-        PrintStatus("Skipping format/columns line");
+        strncmp((char*)line, "#columns:", 9) == 0 ||
+        strncmp((char*)line, "#samheader:", 11) == 0) {
+        PrintStatus("Skipping format/columns/samheader line");
         DecrementNumberHeaderLines();
         return;
     }
@@ -838,18 +851,21 @@ ProcessHeaderLine(u08 *line)
     }
     else // pairs format
     {
-        // Skip "#chromsize: " prefix (11 chars)
-        if (strncmp((char*)line, "#chromsize: ", 11) != 0) {
+        // Check for "#chromsize:" prefix (11 chars)
+        // Accepts formats like:
+        //   #chromsize: SCAFFOLD_100 457836        (single space)
+        //   #chromsize:     SCAFFOLD_1436   25174  (multiple spaces)
+        if (strncmp((char*)line, "#chromsize:", 11) != 0) {
             PrintStatus("Not a chromsize line, skipping");
             DecrementNumberHeaderLines();
             return;
         }
         PrintStatus("Processing chromsize line");
-        line += 11;
+        line += 11; // Skip "#chromsize:" (11 characters)
+        
+        // Skip any whitespace after "#chromsize:" (handles 0, 1, or multiple spaces/tabs)
+        while (*line == ' ' || *line == '\t') line++;
     }
-
-    // Skip any leading whitespace
-    while (*line == ' ' || *line == '\t') line++;
 
     // Read and store contig name
     char contigName[64] = {0};
@@ -1539,7 +1555,7 @@ GrabStdIn()
                         IncramentNumberOfHeaderLines();
                         ProcessHeaderLine(samLine);
                     }
-                    else if ((*((u64 *)samLine)) == 0x69736d6f72686323) // #chromsi
+                    else if (strncmp((char*)samLine, "#chromsize:", 11) == 0)
                     {
                         if (File_Type != pairs && File_Type != undet)
                         {
