@@ -499,134 +499,104 @@ void
 ProcessBodyLine(void *in)
 {
     line_buffer *buffer = (line_buffer *)in;
-    if (!buffer) {
-        PrintError("Null buffer passed to ProcessBodyLine");
-        Global_Error_Flag = 1;
-        return;
-    }
-
     u08 *line = buffer->line;
-    if (!line) {
-        PrintError("Null line in buffer");
-        Global_Error_Flag = 1;
-        return;
-    }
     
     ForLoop(buffer->nLines)
     {
         u64 nLinesTotal = __atomic_add_fetch(&Total_Reads_Processed, 1, 0);
 
-        // Skip readID
-        while (*line && *line != '\t') line++;
-        if (!*line) {
-            PrintError("Malformed line - missing fields after readID");
-            Global_Error_Flag = 1;
-            return;
-        }
-        line++; // Skip tab
+        while (*line++ != '\t') {}
+        u32 len = 1;
+        u32 flags;
 
-        // Parse chr1
-        u32 contigName1[16] = {0};
-        line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), line, '\t');
-        if (!*line) {
-            PrintError("Malformed line - missing pos1");
-            Global_Error_Flag = 1;
-            return;
+        if (File_Type == sam)
+        {
+            while (*++line != '\t') ++len;
+            flags = StringToInt(line, len);
         }
-        line++; // Skip tab
-
-        // Parse pos1
-        char pos1Str[32] = {0};
-        u32 pos1Len = 0;
-        while (line[pos1Len] && line[pos1Len] != '\t' && pos1Len < sizeof(pos1Str)-1) {
-            pos1Str[pos1Len] = line[pos1Len];
-            pos1Len++;
-        }
-        if (!pos1Len || line[pos1Len] != '\t') {
-            PrintError("Malformed line - invalid pos1");
-            Global_Error_Flag = 1;
-            return;
-        }
-        pos1Str[pos1Len] = '\0';
-        
-        char *endPtr;
-        errno = 0;
-        u64 relPos1 = strtoull(pos1Str, &endPtr, 10);
-        if (errno || *endPtr != '\0') {
-            PrintError("Invalid pos1 value: %s", pos1Str);
-            Global_Error_Flag = 1;
-            return;
-        }
-        line += pos1Len + 1; // Skip number and tab
-
-        // Parse chr2
-        u32 contigName2[16] = {0};
-        line = PushStringIntoIntArray(contigName2, ArrayCount(contigName2), line, '\t');
-        if (!*line) {
-            PrintError("Malformed line - missing pos2");
-            Global_Error_Flag = 1;
-            return;
-        }
-        line++; // Skip tab
-
-        // Parse pos2
-        char pos2Str[32] = {0};
-        u32 pos2Len = 0;
-        while (line[pos2Len] && line[pos2Len] != '\t' && pos2Len < sizeof(pos2Str)-1) {
-            pos2Str[pos2Len] = line[pos2Len];
-            pos2Len++;
-        }
-        if (!pos2Len) {
-            PrintError("Malformed line - invalid pos2");
-            Global_Error_Flag = 1;
-            return;
-        }
-        pos2Str[pos2Len] = '\0';
-        
-        errno = 0;
-        u64 relPos2 = strtoull(pos2Str, &endPtr, 10);
-        if (errno || (*endPtr != '\0' && *endPtr != '\t' && *endPtr != '\n')) {
-            PrintError("Invalid pos2 value: %s", pos2Str);
-            Global_Error_Flag = 1;
-            return;
+        else
+        {
+            --line;
+            flags = 0x1;
         }
 
-        // Skip remaining fields (strand1, strand2)
-        while (*line && *line != '\n') line++;
-        if (*line == '\n') line++;
+        if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
+        {
+            u32 contigName1[16];
+            line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), ++line, '\t');
 
-        // Look up contigs and add to image
-        contig *cont1 = 0;
-        if (!ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont1)) {
-            if (*(char*)contigName1 != '!') // suppress error for '!' contig
-                PrintError("Unknown contig: %.64s", (char*)contigName1);
-            continue;
+            len = 0;
+            while (*++line != '\t') ++len;
+            u64 relPos1 = StringToInt64(line, len);
+
+            u32 mapq;
+            if (File_Type == sam)
+            {
+                len = 0;
+                while (*++line != '\t') ++len;
+                mapq = StringToInt(line, len);
+            }
+            else
+            {
+                mapq = Min_Map_Quality;
+            }
+
+            if (mapq >= Min_Map_Quality)
+            {
+                if (File_Type == sam) while (*++line != '\t') {}
+
+                u32 sameContig = 0;
+                u32 contigName2[16];
+
+                if (*++line == '=')
+                {
+                    sameContig = 1;
+                    ++line;
+                }
+                else
+                {
+                    line = PushStringIntoIntArray(contigName2, ArrayCount(contigName2), line, '\t');
+                }
+
+                len = 0;
+                while (*++line != '\t') ++len;
+                u64 relPos2 = StringToInt64(line, len);
+
+                contig *cont = 0;
+                ContigHashTableLookup(contigName1, ArrayCount(contigName1), &cont);
+
+                if (cont)
+                {
+                    u64 cummLen1 = cont->previousCumulativeLength;
+                    u64 read1 = cummLen1 + relPos1;
+
+                    u64 cummLen2 = 0;
+                    if (sameContig)
+                    {
+                        cummLen2 = cummLen1;
+                    }
+                    else
+                    {
+                        cont = 0;
+                        ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont);
+
+                        if (cont)
+                        {
+                            cummLen2 = cont->previousCumulativeLength;
+                        }
+                    }
+
+                    if (cont)
+                    {
+                        u64 read2 = cummLen2 + relPos2;
+
+                        AddReadPairToImage(read1, read2);
+
+                        __atomic_add_fetch(&Total_Good_Reads, 1, 0);
+                    }
+                }
+            }
         }
-
-        contig *cont2 = 0;
-        if (!ContigHashTableLookup(contigName2, ArrayCount(contigName2), &cont2)) {
-            if (*(char*)contigName2 != '!') // suppress error for '!' contig
-                PrintError("Unknown contig: %.64s", (char*)contigName2);
-            continue;
-        }
-
-        // Validate positions
-        if (relPos1 > cont1->length) {
-            PrintError("Position %lu exceeds contig length %lu", relPos1, cont1->length);
-            continue;
-        }
-        if (relPos2 > cont2->length) {
-            PrintError("Position %lu exceeds contig length %lu", relPos2, cont2->length);
-            continue;
-        }
-
-        // Calculate absolute genome positions
-        u64 read1 = cont1->previousCumulativeLength + relPos1;
-        u64 read2 = cont2->previousCumulativeLength + relPos2;
-
-        // Add to contact matrix
-        AddReadPairToImage(read1, read2);
-        __atomic_add_fetch(&Total_Good_Reads, 1, 0);
 
         if ((nLinesTotal % StatusPrintEvery) == 0)
         {
@@ -634,10 +604,17 @@ ProcessBodyLine(void *in)
             memset((void *)buff, ' ', 80);
             buff[80] = 0;
             printf("\r%s", buff);
-            stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u read-pairs mapped", nLinesTotal);
+
+            if (File_Type == sam)
+                stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u reads processed, %$u read-pairs mapped", nLinesTotal, Total_Good_Reads);
+            else
+                stbsp_snprintf(buff, sizeof(buff), "[PretextMap status] :: %$u read-pairs mapped", nLinesTotal);
+
             printf("\r%s", buff);
             fflush(stdout);
         }
+
+        while (*line++ != '\n') {}
     }
 
     AddLineBufferToQueue(Line_Buffer_Queue, buffer);
@@ -875,6 +852,16 @@ ProcessHeaderLine(u08 *line)
     // Skip whitespace after name
     line += nameLen;
     while (*line == ' ' || *line == '\t') line++;
+
+    // For SAM format, skip "LN:" prefix before reading length
+    if (File_Type == sam) {
+        if (strncmp((char*)line, "LN:", 3) != 0) {
+            PrintError("Expected 'LN:' after contig name in SAM header line");
+            Global_Error_Flag = 1;
+            return;
+        }
+        line += 3;  // Skip "LN:"
+    }
 
     // Parse length value
     char lengthStr[32] = {0};
@@ -1418,28 +1405,6 @@ GrabStdIn()
             // Start of new line
             if (linePtr == 0) {
                 lineCount++;
-                // Verify start of pairs format
-                if (lineCount == 1) {
-                    if (character != '#') {
-                        PrintError("Invalid pairs format: First line must start with '#' but found '0x%02X' (%c)", 
-                                 character, (character >= 32 && character <= 126) ? character : '?');
-                        PrintError("Buffer contents at error:");
-                        for (u32 i = 0; i < 32 && i < readBuffer->size; i++) {
-                            if (i % 16 == 0) fprintf(stderr, "\n%04X: ", i);
-                            fprintf(stderr, "%02X ", readBuffer->buffer[i]);
-                            if ((i + 1) % 16 == 0) {
-                                fprintf(stderr, "  ");
-                                for (u32 j = i - 15; j <= i; j++) {
-                                    u08 c = readBuffer->buffer[j];
-                                    fprintf(stderr, "%c", (c >= 32 && c <= 126) ? c : '.');
-                                }
-                            }
-                        }
-                        fprintf(stderr, "\n");
-                        Global_Error_Flag = 1;
-                        return;
-                    }
-                }
             }
 
             // Check for buffer overflow before adding character
@@ -2312,7 +2277,6 @@ MainArgs
     
     u08 highRes = 0;
     u32 outputNameGiven = 0;
-    const char *inputFile = NULL;
     const char *filterIncludeString = 0;
     const char *filterExcludeString = 0;
     for (   u32 index = 1;
@@ -2415,14 +2379,9 @@ MainArgs
         {
             highRes = 1;
         }
-        else if (!inputFile && ArgBuffer[index][0] != '-')
-        {
-            // First non-option argument is treated as input file
-            inputFile = ArgBuffer[index];
-        }
         else
         {
-            PrintError("Unknown option or multiple input files specified: %s", ArgBuffer[index]);
+            PrintError("Unknown option: %s", ArgBuffer[index]);
             exit(EXIT_FAILURE);
         }
     }
@@ -2467,27 +2426,6 @@ MainArgs
     PrintStatus("Creating filters");
     CreateFilters(filterIncludeString, filterExcludeString);
 
-    // Open input file if specified
-    if (inputFile) {
-        PrintStatus("Opening input file: %s", inputFile);
-        int fd = open(inputFile, O_RDONLY);
-        if (fd < 0) {
-            PrintError("Failed to open input file '%s': %s", inputFile, strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-        // Redirect stdin to the input file
-        if (dup2(fd, STDIN_FILENO) < 0) {
-            PrintError("Failed to redirect stdin: %s", strerror(errno));
-            close(fd);
-            exit(EXIT_FAILURE);
-        }
-        close(fd);
-        PrintStatus("Successfully opened input file");
-    } else {
-        PrintStatus("Reading from stdin");
-    }
-
-    PrintStatus("Starting input processing thread");
     ThreadPoolAddTask(Thread_Pool, GrabStdIn, 0);
     PrintStatus("Waiting for processing to complete");
     ThreadPoolWait(Thread_Pool);
