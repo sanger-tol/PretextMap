@@ -1548,6 +1548,16 @@ GrabStdIn()
         buffer->nLines = numLines;
         ThreadPoolAddTask(Thread_Pool, ProcessBodyLine, buffer);
     }
+
+    // Clean up read pool: wait for any pending read buffer tasks to complete
+    // Note: We don't destroy the thread pool here because Threads_KeepAlive is global
+    // and destroying it would affect all thread pools. The memory will be freed
+    // when the program exits since it's allocated from the memory arena.
+    if (readPool && readPool->pool) {
+        ThreadPoolWait(readPool->pool);
+        // Cancel any pending read tasks by setting handle to invalid
+        readPool->handle = -1;
+    }
 }
 
 global_function
