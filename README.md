@@ -59,17 +59,17 @@ Note: also filtering with samtools view as in the above example (... seq_1 seq_2
 * --highRes: high resolution output, only supported by PretextView >=0.2.5
 
 ## Recent fixes and improvements:<br/>
+* **Fixed SAM format header parsing**: Correctly handles SAM format header lines by properly skipping "LN:" prefix when parsing contig lengths from `@SQ` lines
+* **Fixed SAM format body line processing**: `ProcessBodyLine` now correctly handles both SAM and pairs formats, with proper parsing of SAM flags, mapping quality, and contig names
+* **Improved read buffer error handling**: Enhanced error checking in `FillReadBuffer` with validation for invalid file descriptors and read errors
+* **Standardized input handling**: Input is now read exclusively from stdin (via pipes), matching the original design. BAM files should be piped through `samtools view -h`
+* **Removed premature format validation**: Fixed issue where SAM format files were incorrectly rejected due to early validation checks
 * **Improved pairs file input handling**: Enhanced parsing of pairs format files with better error detection and reporting
 * **Robust header line processing**: Improved parsing of `#chromsize:` header lines in pairs format, with proper handling of format declaration and column lines
-* **Enhanced input validation**: Added comprehensive validation for:
-  - Position values (checking for valid numeric values and bounds)
-  - Contig name parsing and lookup
-  - Line format validation with detailed error messages
+* **Enhanced input validation**: Added comprehensive validation for position values, contig name parsing, and line format validation with detailed error messages
 * **Better error handling**: Extensive null pointer checks, buffer overflow protection, and informative error messages throughout the codebase
-* **Improved buffer management**: Increased line buffer size for pairs format (1MB) and rewritten `GetNextReadBuffer` function for more reliable file reading
+* **Improved buffer management**: Increased line buffer size for pairs format (1MB) and improved `GetNextReadBuffer` function for more reliable file reading
 * **UTF-8 BOM support**: Automatic detection and skipping of UTF-8 Byte Order Mark (BOM) in input files
-* **Position bounds checking**: Validation that read positions do not exceed contig lengths
-* **File input support**: Better handling of both stdin and file-based input sources
 
 # Map Format
 Contact maps are saved in a compressed texture format (hence the name). Maps can be read by PretextView (https://github.com/wtsi-hpag/PretextView). Expect pretext map files to take around 30 to 50 M of disk space each.
