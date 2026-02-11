@@ -1,7 +1,5 @@
 /*
-Copyright (c) 2019 Ed Harry, Wellcome Sanger Institute
-Copyright (c) 2026 Chenxi Zhou <chnx.zhou@gmail.com>
-Copyright (c) 2026 Ying Sims <yy5@sanger.ac.uk> 
+Copyright (c) Wellcome Sanger Institute, 2019
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,6 +18,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+author: Ed Harry, Chenxi Zhou, Ying Sims
 */
 
 #define String_(x) #x
@@ -1293,7 +1293,8 @@ GetNextReadBuffer(read_pool *readPool)
     return buffer;
 }
 
-#define SAM_LINE_BUFFER_SIZE KiloByte(16)
+// Increased line buffer size to handle longer lines without overflow -yy5
+#define SAM_LINE_BUFFER_SIZE KiloByte(32)
 #define PAIRS_LINE_BUFFER_SIZE MegaByte(1)  // Increased to 1MB
 
 global_function
@@ -2251,7 +2252,7 @@ MainArgs
                               --mapq {10}
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*")
-                              {--highRes}
+                              {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
         
@@ -2276,6 +2277,7 @@ MainArgs
     }
     
     u08 highRes = 0;
+    u08 ultraRes = 0;
     u32 outputNameGiven = 0;
     const char *filterIncludeString = 0;
     const char *filterExcludeString = 0;
@@ -2379,6 +2381,10 @@ MainArgs
         {
             highRes = 1;
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--ultraRes"))
+        {
+            ultraRes = 1;
+        }
         else
         {
             PrintError("Unknown option: %s", ArgBuffer[index]);
@@ -2395,8 +2401,9 @@ MainArgs
     PrintStatus("Initializing working set mutex");
     InitialiseMutex(Working_Set_rwMutex);
 
-    PrintStatus("Creating memory arena of size %lu GB", (u64)(highRes ? 16 : 3));
-    CreateMemoryArena(Working_Set, GigaByte((u64)(highRes ? 16 : 3)));
+    u64 memorySize = ultraRes ? 24 : (highRes ? 16 : 3);
+    PrintStatus("Creating memory arena of size %lu GB", memorySize);
+    CreateMemoryArena(Working_Set, GigaByte(memorySize));
     
     PrintStatus("Initializing thread pool with 3 threads");
     Thread_Pool = ThreadPoolInit(&Working_Set, 3);
@@ -2405,7 +2412,13 @@ MainArgs
         exit(EXIT_FAILURE);
     }
 
-    if (highRes)
+    if (ultraRes)
+    {
+        Max_Image_Depth = 17;
+        Single_Texture_Resolution = 12;
+        PrintStatus("Running in ultra resolution mode");
+    }
+    else if (highRes)
     {
         Max_Image_Depth = 16;
         Single_Texture_Resolution = 11;
