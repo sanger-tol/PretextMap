@@ -1907,7 +1907,12 @@ ContrastEqualisation(void *in)
             }
         }
     }
-    
+
+    if (max <= min)
+    {
+        return;
+    }
+
     f32 scaleFactor = 254.0f / (f32)(max - min);
 
     ForLoop(nPixels)
@@ -2004,6 +2009,11 @@ ContrastEqualisation(void *in)
                 min = Min(min, pixel);
             }
         }
+    }
+
+    if (max <= min)
+    {
+        return;
     }
 
     scaleFactor = 255.0f / (f32)(max - min);
@@ -2422,8 +2432,7 @@ MainArgs
     PrintStatus("Initializing working set mutex");
     InitialiseMutex(Working_Set_rwMutex);
 
-    // ***  What will the actual, required memory size be?  ***
-    u64 memorySize = ultraRes ? 24 : (highRes ? 16 : 3);
+    u64 memorySize = ultraRes ? 40 : (highRes ? 16 : 3);
     PrintStatus("Creating memory arena of size %lu GB", memorySize);
     CreateMemoryArena(Working_Set, GigaByte(memorySize));
     
