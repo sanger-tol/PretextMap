@@ -398,6 +398,7 @@ u32
 Max_Image_Depth = 15;
 
 #define Min_Image_Depth 10
+// LOD = Level of Detail
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
 #define Pixel_Resolution(depth) (1 << (depth))
 
@@ -435,6 +436,8 @@ InitaliseImages()
 
         ForLoop(Pixel_Resolution(depth))
         {
+            // Allocate successively smaller arrays for the top, right
+            // triangular half of the square image.
             Images[imIndex][index] = PushArray(Working_Set, volatile u16, Pixel_Resolution(depth) - index);
             ForLoop2(Pixel_Resolution(depth) - index)
             {
@@ -452,14 +455,23 @@ AddReadPairToImage(u64 read1, u64 read2)
     u32 pixel1 = (u32)((f64)read1 * factor * (f64)Pixel_Resolution(Max_Image_Depth));
     u32 pixel2 = (u32)((f64)read2 * factor * (f64)Pixel_Resolution(Max_Image_Depth));
 
+    // Making the x coordinate always smaller than y means that only pixels in
+    // the top, right triangular half of the image are addressed.
     u32 min = Min(pixel1, pixel2);
     u32 max = Max(pixel1, pixel2);
     volatile u16 *pixel = &Images[0][min][max - min];
 #ifndef _WIN32
+    // x __atomic_fetch_add() is the C compiler's "system" function that would
+    // be called by atomic_fetch_add() from stdatomic.h, which is what should
+    // probably be called instead.  The final 0 (memory_order) argument in
+    // atomic_fetch_add_explicit(pixel, 1, 0) means "memory_order_relaxed", a
+    // policy which allows any thread to atomically update the count for a
+    // pixel without the compiler considering the order of operations.
     u16 oldVal = __atomic_fetch_add(pixel, 1, 0);
 #else
     u16 oldVal = __atomic_fetch_add((volatile unsigned long *)pixel, 1, 0);
 #endif
+    // Was value already saturated?
     if (oldVal == u16_max)
     {
 #ifndef _WIN32
@@ -520,7 +532,16 @@ ProcessBodyLine(void *in)
             flags = 0x1;
         }
 
-        if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
+        // SAM flags:
+        //       0x1 = paired read
+        //   ! 0xf0c = none of these are set:
+        //         0x4  read unmapped
+        //         0x8  mate unmapped
+        //       0x100  not primary alignment
+        //       0x200  read fails platform/vendor quality checks
+        //       0x400  read is PCR or optical duplicate
+        //       0x800  supplementary alignment
+        if ((flags & 0x1) && !(flags & 0xf0c))
         {
             u32 contigName1[16];
             line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), ++line, '\t');
@@ -2401,6 +2422,7 @@ MainArgs
     PrintStatus("Initializing working set mutex");
     InitialiseMutex(Working_Set_rwMutex);
 
+    // ***  What will the actual, required memory size be?  ***
     u64 memorySize = ultraRes ? 24 : (highRes ? 16 : 3);
     PrintStatus("Creating memory arena of size %lu GB", memorySize);
     CreateMemoryArena(Working_Set, GigaByte(memorySize));
