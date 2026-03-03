@@ -1837,7 +1837,10 @@ ContrastEqualisation(void *in)
                 max = Max(max, pixel);
             }
 
-            scalars[index] = max ? 1.0f / sqrtf((f32)max) : 1.0f; //TODO invsqrt intrinsic?
+            // A value in the `scalars` array is assigned for each row in the
+            // image, which is the maximum value seen on that row, and will
+            // range between 1.0 (when max == 0) and < 256.0
+            scalars[index] = max ? 1.0f / sqrtf((f32)max) : 1.0f; // TODO invsqrt intrinsic?
         }
 
         ForLoop(nPixels)
@@ -1877,6 +1880,7 @@ ContrastEqualisation(void *in)
             {
                 u16 newPixel = 0;
 
+                // Is this log scaling?
                 while (pixel)
                 {
                     u32 set = HighestSetBit((u32)pixel);
@@ -1889,6 +1893,7 @@ ContrastEqualisation(void *in)
         }
     }
 
+    // Find minimum and maximum pixel value in image
     max = 0;
     u16 min = u16_max;
 
@@ -1915,6 +1920,7 @@ ContrastEqualisation(void *in)
 
     f32 scaleFactor = 254.0f / (f32)(max - min);
 
+    // Normalize min:max range to 0:255
     ForLoop(nPixels)
     {
         ForLoop2(nPixels - index)
@@ -1923,7 +1929,7 @@ ContrastEqualisation(void *in)
             if (pixel)
             {
                 image[index][index2] = Min((u16)((f32)(pixel - min) * scaleFactor), 254) + 1;
-                if (index2)
+                if (index2)  // Why skip `index2 == 0`?
                 {
                     ++hist[image[index][index2]];
                     ++nnz;
@@ -1932,6 +1938,7 @@ ContrastEqualisation(void *in)
         }
     }
 
+    // If there are any non-zero pixels in the image
     if (nnz)
     {
         u32 C = (u32)(((f32)Contrast_Histogram_Cutoff_Slope * (f32)(nnz) / 256.0f) + 0.5f);
