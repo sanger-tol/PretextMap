@@ -1,7 +1,5 @@
 /*
-Copyright (c) 2019 Ed Harry, Wellcome Sanger Institute
-Copyright (c) 2026 Chenxi Zhou <chnx.zhou@gmail.com>
-Copyright (c) 2026 Ying Sims <yy5@sanger.ac.uk> 
+Copyright (c) Wellcome Sanger Institute, 2019
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,6 +18,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+author: Ed Harry, Chenxi Zhou, Ying Sims
 */
 
 #define String_(x) #x
@@ -398,6 +398,7 @@ u32
 Max_Image_Depth = 15;
 
 #define Min_Image_Depth 10
+// LOD = Level of Detail
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
 #define Pixel_Resolution(depth) (1 << (depth))
 
@@ -435,6 +436,8 @@ InitaliseImages()
 
         ForLoop(Pixel_Resolution(depth))
         {
+            // Allocate successively smaller arrays for the top, right
+            // triangular half of the square image.
             Images[imIndex][index] = PushArray(Working_Set, volatile u16, Pixel_Resolution(depth) - index);
             ForLoop2(Pixel_Resolution(depth) - index)
             {
@@ -452,14 +455,23 @@ AddReadPairToImage(u64 read1, u64 read2)
     u32 pixel1 = (u32)((f64)read1 * factor * (f64)Pixel_Resolution(Max_Image_Depth));
     u32 pixel2 = (u32)((f64)read2 * factor * (f64)Pixel_Resolution(Max_Image_Depth));
 
+    // Making the x coordinate always smaller than y means that only pixels in
+    // the top, right triangular half of the image are addressed.
     u32 min = Min(pixel1, pixel2);
     u32 max = Max(pixel1, pixel2);
     volatile u16 *pixel = &Images[0][min][max - min];
 #ifndef _WIN32
+    // x __atomic_fetch_add() is the C compiler's "system" function that would
+    // be called by atomic_fetch_add() from stdatomic.h, which is what should
+    // probably be called instead.  The final 0 (memory_order) argument in
+    // atomic_fetch_add_explicit(pixel, 1, 0) means "memory_order_relaxed", a
+    // policy which allows any thread to atomically update the count for a
+    // pixel without the compiler considering the order of operations.
     u16 oldVal = __atomic_fetch_add(pixel, 1, 0);
 #else
     u16 oldVal = __atomic_fetch_add((volatile unsigned long *)pixel, 1, 0);
 #endif
+    // Was value already saturated?
     if (oldVal == u16_max)
     {
 #ifndef _WIN32
@@ -520,7 +532,16 @@ ProcessBodyLine(void *in)
             flags = 0x1;
         }
 
-        if ((flags < 128) && (flags & 0x1) && !(flags & 0x4) && !(flags & 0x8))
+        // SAM flags:
+        //       0x1 = paired read
+        //   ! 0xf0c = none of these are set:
+        //         0x4  read unmapped
+        //         0x8  mate unmapped
+        //       0x100  not primary alignment
+        //       0x200  read fails platform/vendor quality checks
+        //       0x400  read is PCR or optical duplicate
+        //       0x800  supplementary alignment
+        if ((flags & 0x1) && !(flags & 0xf0c))
         {
             u32 contigName1[16];
             line = PushStringIntoIntArray(contigName1, ArrayCount(contigName1), ++line, '\t');
@@ -1293,7 +1314,8 @@ GetNextReadBuffer(read_pool *readPool)
     return buffer;
 }
 
-#define SAM_LINE_BUFFER_SIZE KiloByte(16)
+// Increased line buffer size to handle longer lines without overflow -yy5
+#define SAM_LINE_BUFFER_SIZE KiloByte(32)
 #define PAIRS_LINE_BUFFER_SIZE MegaByte(1)  // Increased to 1MB
 
 global_function
@@ -1815,7 +1837,10 @@ ContrastEqualisation(void *in)
                 max = Max(max, pixel);
             }
 
-            scalars[index] = max ? 1.0f / sqrtf((f32)max) : 1.0f; //TODO invsqrt intrinsic?
+            // A value in the `scalars` array is assigned for each row in the
+            // image, which is the maximum value seen on that row, and will
+            // range between 1.0 (when max == 0) and < 256.0
+            scalars[index] = max ? 1.0f / sqrtf((f32)max) : 1.0f; // TODO invsqrt intrinsic?
         }
 
         ForLoop(nPixels)
@@ -1855,6 +1880,7 @@ ContrastEqualisation(void *in)
             {
                 u16 newPixel = 0;
 
+                // Is this log scaling?
                 while (pixel)
                 {
                     u32 set = HighestSetBit((u32)pixel);
@@ -1867,6 +1893,7 @@ ContrastEqualisation(void *in)
         }
     }
 
+    // Find minimum and maximum pixel value in image
     max = 0;
     u16 min = u16_max;
 
@@ -1885,9 +1912,15 @@ ContrastEqualisation(void *in)
             }
         }
     }
-    
+
+    if (max <= min)
+    {
+        return;
+    }
+
     f32 scaleFactor = 254.0f / (f32)(max - min);
 
+    // Normalize min:max range to 0:255
     ForLoop(nPixels)
     {
         ForLoop2(nPixels - index)
@@ -1896,7 +1929,7 @@ ContrastEqualisation(void *in)
             if (pixel)
             {
                 image[index][index2] = Min((u16)((f32)(pixel - min) * scaleFactor), 254) + 1;
-                if (index2)
+                if (index2)  // Why skip `index2 == 0`?
                 {
                     ++hist[image[index][index2]];
                     ++nnz;
@@ -1905,6 +1938,7 @@ ContrastEqualisation(void *in)
         }
     }
 
+    // If there are any non-zero pixels in the image
     if (nnz)
     {
         u32 C = (u32)(((f32)Contrast_Histogram_Cutoff_Slope * (f32)(nnz) / 256.0f) + 0.5f);
@@ -1982,6 +2016,11 @@ ContrastEqualisation(void *in)
                 min = Min(min, pixel);
             }
         }
+    }
+
+    if (max <= min)
+    {
+        return;
     }
 
     scaleFactor = 255.0f / (f32)(max - min);
@@ -2251,7 +2290,7 @@ MainArgs
                               --mapq {10}
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*")
-                              {--highRes}
+                              {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
         
@@ -2276,6 +2315,7 @@ MainArgs
     }
     
     u08 highRes = 0;
+    u08 ultraRes = 0;
     u32 outputNameGiven = 0;
     const char *filterIncludeString = 0;
     const char *filterExcludeString = 0;
@@ -2379,6 +2419,10 @@ MainArgs
         {
             highRes = 1;
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--ultraRes"))
+        {
+            ultraRes = 1;
+        }
         else
         {
             PrintError("Unknown option: %s", ArgBuffer[index]);
@@ -2395,8 +2439,9 @@ MainArgs
     PrintStatus("Initializing working set mutex");
     InitialiseMutex(Working_Set_rwMutex);
 
-    PrintStatus("Creating memory arena of size %lu GB", (u64)(highRes ? 16 : 3));
-    CreateMemoryArena(Working_Set, GigaByte((u64)(highRes ? 16 : 3)));
+    u64 memorySize = ultraRes ? 40 : (highRes ? 16 : 3);
+    PrintStatus("Creating memory arena of size %lu GB", memorySize);
+    CreateMemoryArena(Working_Set, GigaByte(memorySize));
     
     PrintStatus("Initializing thread pool with 3 threads");
     Thread_Pool = ThreadPoolInit(&Working_Set, 3);
@@ -2405,7 +2450,13 @@ MainArgs
         exit(EXIT_FAILURE);
     }
 
-    if (highRes)
+    if (ultraRes)
+    {
+        Max_Image_Depth = 17;
+        Single_Texture_Resolution = 12;
+        PrintStatus("Running in ultra resolution mode");
+    }
+    else if (highRes)
     {
         Max_Image_Depth = 16;
         Single_Texture_Resolution = 11;

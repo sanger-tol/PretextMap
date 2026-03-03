@@ -321,11 +321,13 @@ PushSize_(memory_arena *arena, u64 size, u32 alignment_pow2 = Default_Memory_Ali
     {
 	result = 0;
 #if defined(__APPLE__) || defined(_WIN32)
-	printf("Push of %llu bytes failed, out of memory.\n", size);   
+	fprintf(stderr, "Push of %llu bytes failed, out of memory (arena: %llu/%llu used).\n",
+		(unsigned long long)size, (unsigned long long)arena->currentSize, (unsigned long long)arena->maxSize);
 #else
-	printf("Push of %lu bytes failed, out of memory.\n", size);
-#endif	
-	*((volatile u32 *)0) = 0;
+	fprintf(stderr, "Push of %lu bytes failed, out of memory (arena: %lu/%lu used).\n",
+		(unsigned long)size, (unsigned long)arena->currentSize, (unsigned long)arena->maxSize);
+#endif
+	exit(EXIT_FAILURE);
     }
     else
     {

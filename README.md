@@ -72,7 +72,7 @@ Note: also filtering with samtools view as in the above example (... seq_1 seq_2
 * **UTF-8 BOM support**: Automatic detection and skipping of UTF-8 Byte Order Mark (BOM) in input files
 
 # Map Format
-Contact maps are saved in a compressed texture format (hence the name). Maps can be read by PretextView (https://github.com/wtsi-hpag/PretextView). Expect pretext map files to take around 30 to 50 M of disk space each.
+Contact maps are saved in a compressed texture format (hence the name). Maps can be read by PretextView (https://github.com/sanger-tol/PretextView). Expect pretext map files to take around 30 to 50 M of disk space each.
 
 # Requirments, running
 3G of RAM and 2 CPU cores
