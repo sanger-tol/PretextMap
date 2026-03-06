@@ -402,46 +402,64 @@ Max_Image_Depth = 15;
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
 #define Pixel_Resolution(depth) (1 << (depth))
 
+// Maximum number of mapq layers (for DXT texture output)
+#define Max_Mapq_Layers 8
+
 global_variable
-volatile u16***
+u32
+Number_of_Mapq_Layers = 1;
+
+global_variable
+u32
+Mapq_Thresholds[Max_Mapq_Layers];
+
+global_variable
+volatile u16****
 Images;
 
 global_variable
-u32**
+u32***
 Image_Histograms;
 
 global_variable
-f32**
+f32***
 Image_Norm_Scalars;
+
+global_variable
+u32
+Current_Mapq_Layer = 0;
 
 global_function
 void
 InitaliseImages()
 {
-    Images = PushArray(Working_Set, volatile u16**, Number_of_LODs);
-    Image_Histograms = PushArray(Working_Set, u32*, Number_of_LODs);
-    Image_Norm_Scalars = PushArray(Working_Set, f32*, Number_of_LODs);
+    Images = PushArray(Working_Set, volatile u16***, Number_of_Mapq_Layers);
+    Image_Histograms = PushArray(Working_Set, u32**, Number_of_Mapq_Layers);
+    Image_Norm_Scalars = PushArray(Working_Set, f32**, Number_of_Mapq_Layers);
 
-    for (   u32 depth = Max_Image_Depth, imIndex = 0;
-            depth >= Min_Image_Depth;
-            --depth, ++imIndex )
+    for (u32 mapqLayer = 0; mapqLayer < Number_of_Mapq_Layers; ++mapqLayer)
     {
-        Images[imIndex] = PushArray(Working_Set, volatile u16*, Pixel_Resolution(depth));
-        
-        Image_Histograms[imIndex] = PushArray(Working_Set, u32, 1 << 8);
-        memset(Image_Histograms[imIndex], 0, (1 << 8) * sizeof(u32));
+        Images[mapqLayer] = PushArray(Working_Set, volatile u16**, Number_of_LODs);
+        Image_Histograms[mapqLayer] = PushArray(Working_Set, u32*, Number_of_LODs);
+        Image_Norm_Scalars[mapqLayer] = PushArray(Working_Set, f32*, Number_of_LODs);
 
-        Image_Norm_Scalars[imIndex] = PushArray(Working_Set, f32, Pixel_Resolution(depth));
-        memset(Image_Norm_Scalars[imIndex], 0, Pixel_Resolution(depth) * sizeof(f32));
-
-        ForLoop(Pixel_Resolution(depth))
+        for (   u32 depth = Max_Image_Depth, imIndex = 0;
+                depth >= Min_Image_Depth;
+                --depth, ++imIndex )
         {
-            // Allocate successively smaller arrays for the top, right
-            // triangular half of the square image.
-            Images[imIndex][index] = PushArray(Working_Set, volatile u16, Pixel_Resolution(depth) - index);
-            ForLoop2(Pixel_Resolution(depth) - index)
+            Images[mapqLayer][imIndex] = PushArray(Working_Set, volatile u16*, Pixel_Resolution(depth));
+            Image_Histograms[mapqLayer][imIndex] = PushArray(Working_Set, u32, 1 << 8);
+            memset((void *)Image_Histograms[mapqLayer][imIndex], 0, (1 << 8) * sizeof(u32));
+            Image_Norm_Scalars[mapqLayer][imIndex] = PushArray(Working_Set, f32, Pixel_Resolution(depth));
+            memset(Image_Norm_Scalars[mapqLayer][imIndex], 0, Pixel_Resolution(depth) * sizeof(f32));
+
+            ForLoop(Pixel_Resolution(depth))
             {
-                Images[imIndex][index][index2] = 0;
+                Images[mapqLayer][imIndex][index] = PushArray(Working_Set, volatile u16, Pixel_Resolution(depth) - index);
+                ForLoop2(Pixel_Resolution(depth) - index)
+                {
+                    Images[mapqLayer][imIndex][index][index2] = 0;
+                }
             }
         }
     }
@@ -449,7 +467,7 @@ InitaliseImages()
 
 global_function
 void
-AddReadPairToImage(u64 read1, u64 read2)
+AddReadPairToImage(u64 read1, u64 read2, u32 mapq)
 {
     f64 factor = 1.0 / (f64)Total_Genome_Length;
     u32 pixel1 = (u32)((f64)read1 * factor * (f64)Pixel_Resolution(Max_Image_Depth));
@@ -459,28 +477,28 @@ AddReadPairToImage(u64 read1, u64 read2)
     // the top, right triangular half of the image are addressed.
     u32 min = Min(pixel1, pixel2);
     u32 max = Max(pixel1, pixel2);
-    volatile u16 *pixel = &Images[0][min][max - min];
-#ifndef _WIN32
-    // x __atomic_fetch_add() is the C compiler's "system" function that would
-    // be called by atomic_fetch_add() from stdatomic.h, which is what should
-    // probably be called instead.  The final 0 (memory_order) argument in
-    // atomic_fetch_add_explicit(pixel, 1, 0) means "memory_order_relaxed", a
-    // policy which allows any thread to atomically update the count for a
-    // pixel without the compiler considering the order of operations.
-    u16 oldVal = __atomic_fetch_add(pixel, 1, 0);
-#else
-    u16 oldVal = __atomic_fetch_add((volatile unsigned long *)pixel, 1, 0);
-#endif
-    // Was value already saturated?
-    if (oldVal == u16_max)
+
+    for (u32 mapqLayer = 0; mapqLayer < Number_of_Mapq_Layers; ++mapqLayer)
     {
+        if (mapq >= Mapq_Thresholds[mapqLayer])
+        {
+            volatile u16 *pixel = &Images[mapqLayer][0][min][max - min];
 #ifndef _WIN32
-        u16 val = oldVal;
-        __atomic_store(pixel, &val, 0);
+            u16 oldVal = __atomic_fetch_add(pixel, 1, 0);
 #else
-        unsigned long val = oldVal;
-        __atomic_store((volatile unsigned long *)pixel, &val, 0);
+            u16 oldVal = __atomic_fetch_add((volatile unsigned long *)pixel, 1, 0);
 #endif
+            if (oldVal == u16_max)
+            {
+#ifndef _WIN32
+                u16 val = oldVal;
+                __atomic_store(pixel, &val, 0);
+#else
+                unsigned long val = oldVal;
+                __atomic_store((volatile unsigned long *)pixel, &val, 0);
+#endif
+            }
+        }
     }
 }
 
@@ -562,7 +580,10 @@ ProcessBodyLine(void *in)
                 mapq = Min_Map_Quality;
             }
 
-            if (mapq >= Min_Map_Quality)
+            // With mapq layers: add to all layers where mapq >= threshold.
+            // Without mapq layers: filter by Min_Map_Quality (current behavior).
+            u08 shouldAdd = (Number_of_Mapq_Layers > 1) ? 1 : (mapq >= Min_Map_Quality);
+            if (shouldAdd)
             {
                 if (File_Type == sam) while (*++line != '\t') {}
 
@@ -610,8 +631,8 @@ ProcessBodyLine(void *in)
                     if (cont)
                     {
                         u64 read2 = cummLen2 + relPos2;
-
-                        AddReadPairToImage(read1, read2);
+                        //if Number_of_Mapq_Layers > 1, add to all layers where mapq >= threshold.
+                        AddReadPairToImage(read1, read2, mapq);
 
                         __atomic_add_fetch(&Total_Good_Reads, 1, 0);
                     }
@@ -1237,8 +1258,10 @@ FinishProcessingHeader()
                 printf("ascending");
             }
         }
-        if (File_Type == sam)
+        if (File_Type == sam && Number_of_Mapq_Layers == 1)
             printf(". Filtering by minimum mapping quality %d\n", Min_Map_Quality);
+        else if (File_Type == sam && Number_of_Mapq_Layers > 1)
+            printf(". Mapq layers enabled (%u thresholds)\n", Number_of_Mapq_Layers);
         else
             printf("\n");
     }
@@ -1574,12 +1597,12 @@ GrabStdIn()
 
 global_function
 u16
-PixelLookup(u32 x, u32 y)
+PixelLookup(u32 x, u32 y, u32 mapqLayer)
 {
     u32 min = Min(x, y);
     u32 max = Max(x, y);
 
-    return((u16)Images[0][min][max - min]);
+    return((u16)Images[mapqLayer][0][min][max - min]);
 }
 
 struct
@@ -1602,6 +1625,13 @@ weighted_median_kernel
 {
     binary_heap *heap;
     f32 **weights;
+};
+
+struct
+lod_task
+{
+    u32 mapqLayer;
+    u32 lodIndex;
 };
 
 global_function
@@ -1709,8 +1739,10 @@ global_function
 void
 CreateMipMap(void *in)
 {
-    u32 level = *((u32 *)in);
-    u16 **image = (u16 **)Images[level];
+    lod_task *task = (lod_task *)in;
+    u32 mapqLayer = task->mapqLayer;
+    u32 level = task->lodIndex;
+    u16 **image = (u16 **)Images[mapqLayer][level];
     u32 nPixels = Pixel_Resolution(Max_Image_Depth - level);
     u32 pixelResBin = 1 << level;
     weighted_median_kernel *kernel = MipMap_Weighted_Median_Kernels[level - 1];
@@ -1758,7 +1790,7 @@ CreateMipMap(void *in)
                         binId_y < pixelResBin;
                         ++pixel_y, ++binId_y )
                 {
-                    u16 pixel = PixelLookup(pixel_x, pixel_y);
+                    u16 pixel = PixelLookup(pixel_x, pixel_y, mapqLayer);
                     
                     u32 wId1 = (binId_x >= (pixelResBin >> 1)) ? (pixelResBin - 1 - binId_x) : (binId_x);
                     u32 wId2 = (binId_y >= (pixelResBin >> 1)) ? (pixelResBin - 1 - binId_y) : (binId_y);
@@ -1807,13 +1839,15 @@ global_function
 void
 ContrastEqualisation(void *in)
 {
-    u32 lodIndex = *((u32 *)in);
-    u16 **image = (u16 **)Images[lodIndex];
+    lod_task *task = (lod_task *)in;
+    u32 mapqLayer = task->mapqLayer;
+    u32 lodIndex = task->lodIndex;
+    u16 **image = (u16 **)Images[mapqLayer][lodIndex];
     u32 nPixels = Pixel_Resolution(Max_Image_Depth - lodIndex);
-    u32 *hist = Image_Histograms[lodIndex];
+    u32 *hist = Image_Histograms[mapqLayer][lodIndex];
     u32 nnz = 0;
 
-    f32 *scalars = Image_Norm_Scalars[lodIndex];
+    f32 *scalars = Image_Norm_Scalars[mapqLayer][lodIndex];
 
     u16 max;
     f32 maxNorm;
@@ -2110,9 +2144,10 @@ CreateDXTTexture(void *in)
     u32 bufferPtr = 0;
 
     u32 textureResolution = Single_Texture_Resolution;
+    u32 mapqLayer = Current_Mapq_Layer;
     ForLoop(Number_of_LODs)
     {
-        u16 **image = (u16 **)Images[index];
+        u16 **image = (u16 **)Images[mapqLayer][index];
         u32 texturePixelResolution = Pow2(textureResolution--);
 
         u32 imageX = buffer->x * texturePixelResolution;
@@ -2266,14 +2301,34 @@ CreateDXTTextures()
 
     Texture_Buffer_Queue = PushStruct(Working_Set, texture_buffer_queue);
     InitialiseTextureBufferQueue(&Working_Set, Texture_Buffer_Queue, nBytesPerText);
-    u32 id = 0;
-    ForLoop(Pow2(nTextResolution))
+
+    for (u32 mapqLayer = 0; mapqLayer < Number_of_Mapq_Layers; ++mapqLayer)
     {
-        ForLoop2(Pow2(nTextResolution) - index)
+        if (mapqLayer == 1)
         {
-            Texture_Coordinates[id] = (u16)(((u16)index) << 8) | (u16)(index + index2);
-            ThreadPoolAddTask(Thread_Pool, CreateDXTTexture, (void *)(Texture_Coordinates + id++));
+            u08 mapqMagic[4] = {'m', 'x', 'l', 'q'};
+            fwrite(mapqMagic, 1, 4, Output_File);
+            u08 nLayers = (u08)Number_of_Mapq_Layers;
+            fwrite(&nLayers, 1, 1, Output_File);
+            ForLoop(Number_of_Mapq_Layers)
+            {
+                u08 thresh = (u08)Mapq_Thresholds[index];
+                fwrite(&thresh, 1, 1, Output_File);
+            }
         }
+
+        Current_Mapq_Layer = mapqLayer;
+        Texture_Coordinate_Ptr = 0;
+        u32 id = 0;
+        ForLoop(Pow2(nTextResolution))
+        {
+            ForLoop2(Pow2(nTextResolution) - index)
+            {
+                Texture_Coordinates[id] = (u16)(((u16)index) << 8) | (u16)(index + index2);
+                ThreadPoolAddTask(Thread_Pool, CreateDXTTexture, (void *)(Texture_Coordinates + id++));
+            }
+        }
+        ThreadPoolWait(Thread_Pool);
     }
 }
 
@@ -2291,6 +2346,7 @@ MainArgs
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*")
                               {--highRes|--ultraRes}
+                              --mapqLayers "0,10,20,30"  (mapq thresholds for multiple layers, enables mapq-based snapshots)
 
   If no input file is specified, input will be read from stdin.)help");
         
@@ -2319,6 +2375,7 @@ MainArgs
     u32 outputNameGiven = 0;
     const char *filterIncludeString = 0;
     const char *filterExcludeString = 0;
+    const char *mapqLayersString = 0;
     for (   u32 index = 1;
             index < (u32)ArgCount;
             ++index )
@@ -2423,6 +2480,15 @@ MainArgs
         {
             ultraRes = 1;
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--mapqLayers"))
+        {
+            if (index + 1 >= (u32)ArgCount) {
+                PrintError("Missing value after --mapqLayers");
+                exit(EXIT_FAILURE);
+            }
+            ++index;
+            mapqLayersString = ArgBuffer[index];
+        }
         else
         {
             PrintError("Unknown option: %s", ArgBuffer[index]);
@@ -2434,6 +2500,37 @@ MainArgs
     {
         PrintError("Please provide an output file name (-o output.pretext)");
         exit(EXIT_FAILURE);
+    }
+
+    if (mapqLayersString)
+    {
+        Number_of_Mapq_Layers = 0;
+        const char *p = mapqLayersString;
+        while (*p && Number_of_Mapq_Layers < Max_Mapq_Layers)
+        {
+            while (*p == ' ' || *p == ',') ++p;
+            if (!*p) break;
+            u32 val;
+            if (StringToInt_Check((u08 *)p, &val))
+            {
+                Mapq_Thresholds[Number_of_Mapq_Layers++] = val;
+                while (*p >= '0' && *p <= '9') ++p;
+            }
+            else
+            {
+                while (*p && *p != ',' && *p != ' ') ++p;
+            }
+        }
+        if (Number_of_Mapq_Layers == 0)
+        {
+            PrintError("Invalid --mapqLayers: no valid thresholds (e.g. \"0,10,20,30\")");
+            exit(EXIT_FAILURE);
+        }
+        PrintStatus("Mapq layers: %u thresholds", Number_of_Mapq_Layers);
+    }
+    else
+    {
+        Mapq_Thresholds[0] = 0;
     }
 
     PrintStatus("Initializing working set mutex");
@@ -2484,11 +2581,8 @@ MainArgs
     if (Global_Error_Flag) exit(EXIT_FAILURE);
 
     MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, Number_of_LODs - 1);
-    u32 mipMapLevels[Number_of_LODs];
     ForLoop(Number_of_LODs)
     {
-        mipMapLevels[index] = index;
-        
         if (index)
         {
             MipMap_Weighted_Median_Kernels[index - 1] = PushStruct(Working_Set, weighted_median_kernel);
@@ -2498,16 +2592,35 @@ MainArgs
             {
                 MipMap_Weighted_Median_Kernels[index - 1]->weights[index2] = PushArray(Working_Set, f32, (1 << (index - 1)) - index2);
             }
+        }
+    }
 
-            ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + index));
+    for (u32 mapqLayer = 0; mapqLayer < Number_of_Mapq_Layers; ++mapqLayer)
+    {
+        ForLoop(Number_of_LODs)
+        {
+            if (index)
+            {
+                lod_task *task = PushStruct(Working_Set, lod_task);
+                task->mapqLayer = mapqLayer;
+                task->lodIndex = index;
+                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)task);
+            }
         }
     }
    
     PrintStatus("Creating MipMaps...");
     ThreadPoolWait(Thread_Pool);
-    ForLoop(Number_of_LODs)
+
+    for (u32 mapqLayer = 0; mapqLayer < Number_of_Mapq_Layers; ++mapqLayer)
     {
-        ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
+        ForLoop(Number_of_LODs)
+        {
+            lod_task *task = PushStruct(Working_Set, lod_task);
+            task->mapqLayer = mapqLayer;
+            task->lodIndex = index;
+            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)task);
+        }
     }
     PrintStatus("Equalising contrast...");
     ThreadPoolWait(Thread_Pool);
