@@ -65,7 +65,7 @@ Note: also filtering with samtools view as in the above example (... seq_1 seq_2
 ## New option, version 0.1.9:<br/>
 * --highRes: high resolution output, only supported by PretextView >=0.2.5
 
-## New option, version 0.3.0:<br/>
+## New option, version 0.2.4:<br/>
 * --ultraRes: ultra resolution output for maximum detail in contact maps. Requires 40GB RAM (vs 16GB for --highRes, 3GB default). Use for large or high-coverage Hi-C datasets where fine-scale structure is important.
 
 * Long Hi-C data support: PretextMap supports long Hi-C data from mapped BAM files. The line buffer has been increased to 32KB to handle long SAM lines (e.g. from samtools view -h file.bam) produced by long-read Hi-C technologies (e.g. PacBio, Nanopore) where alignments can span many kilobases, without buffer overflow.
