@@ -2754,7 +2754,7 @@ MainArgs
 
         if (Number_of_MapQ_Layers > 1)
         {
-            PrintStatus("Processing MAPQ layer %d/%d (MAPQ >= %d, %$u read-pairs)", index + 1, Number_of_MapQ_Layers, layer->threshold, layer->totalGoodReads);
+            PrintStatus("Processing MAPQ layer %d/%d (MAPQ >= %d, %$llu read-pairs)", index + 1, Number_of_MapQ_Layers, layer->threshold, (unsigned long long)layer->totalGoodReads);
         }
 
         ForLoop2(Number_of_LODs)
