@@ -1,7 +1,7 @@
 project('PretextMap', ['c', 'cpp'],
     license: 'MIT',
     meson_version: '>=0.57.1',
-    version: '1.0.0'
+    version: '1.0.1'
 )
 
 deps = [dependency('threads')]
