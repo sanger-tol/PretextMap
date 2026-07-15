@@ -36,13 +36,24 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * -o specifies an output file (required)<br/>
 * --sortby sorts contigs by length, name or nosort (default: length)<br/>
 * --sortorder ascend or descend (default: descend, no effect if sortby = nosort)<br/>
-* --mapq sets a minimum mapping quality filter (default: 10)<br/>
+* --mapq sets a minimum mapping quality filter (default: 0)<br/>
+* --mapqLayers comma-separated MAPQ layer thresholds (default: 0,10). Each threshold produces a contact-map layer including read pairs with MAPQ ≥ that value<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
 
-example:<br/>
+By default PretextMap writes two MAPQ layers (0 and 10). No `--mapq` or `--mapqLayers` flags are needed for that case:<br/>
 ```sh
-> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend --mapq 10
+> samtools view -h file.bam | PretextMap -o map.pretext
+```
+
+Custom sorting example:<br/>
+```sh
+> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend
+```
+
+Custom MAPQ layers example:<br/>
+```sh
+> samtools view -h file.bam | PretextMap -o map.pretext --mapqLayers "0,10,20,30"
 ```
 
 Ultra resolution example (for large Hi-C datasets):<br/>

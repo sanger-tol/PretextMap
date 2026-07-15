@@ -391,7 +391,7 @@ Working_Set_rwMutex;
 
 global_variable
 u32
-Min_Map_Quality = 10;
+Min_Map_Quality = 0;
 
 #define Max_MapQ_Layers 16
 #define MapQ_Layer_Header_Extension_Size 18
@@ -406,11 +406,11 @@ mapq_layer
 
 global_variable
 u32
-MapQ_Layer_Thresholds[Max_MapQ_Layers] = {10};
+MapQ_Layer_Thresholds[Max_MapQ_Layers] = {0, 10};
 
 global_variable
 u32
-Number_of_MapQ_Layers = 1;
+Number_of_MapQ_Layers = 2;
 
 global_variable
 mapq_layer *
@@ -2495,8 +2495,8 @@ MainArgs
   PretextMap -o output.pretext [input.pairs|input.sam]
                               (--sortby ({length}, name, nosort)
                               --sortorder ({descend}, ascend)
-                              --mapq {10}
-                              --mapqLayers "0,10,20,30"
+                              --mapq {0}
+                              --mapqLayers {"0,10"}
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*")
                               {--highRes|--ultraRes}
@@ -2661,22 +2661,21 @@ MainArgs
         exit(EXIT_FAILURE);
     }
 
-    if (mapqLayersGiven)
+    if (!mapqLayersGiven)
     {
-        if (!mapqGiven)
-        {
-            Min_Map_Quality = MapQ_Layer_Thresholds[0];
-        }
-        else if (MapQ_Layer_Thresholds[0] < Min_Map_Quality)
-        {
-            PrintError("The lowest --mapqLayers threshold (%d) is below the --mapq prefilter (%d)", MapQ_Layer_Thresholds[0], Min_Map_Quality);
-            exit(EXIT_FAILURE);
-        }
+        MapQ_Layer_Thresholds[0] = 0;
+        MapQ_Layer_Thresholds[1] = 10;
+        Number_of_MapQ_Layers = 2;
     }
-    else
+
+    if (!mapqGiven)
     {
-        MapQ_Layer_Thresholds[0] = Min_Map_Quality;
-        Number_of_MapQ_Layers = 1;
+        Min_Map_Quality = MapQ_Layer_Thresholds[0];
+    }
+    else if (MapQ_Layer_Thresholds[0] < Min_Map_Quality)
+    {
+        PrintError("The lowest --mapqLayers threshold (%d) is below the --mapq prefilter (%d)", MapQ_Layer_Thresholds[0], Min_Map_Quality);
+        exit(EXIT_FAILURE);
     }
 
     PrintStatus("Initializing working set mutex");
