@@ -409,6 +409,11 @@ global_variable
 u32
 Balance_Mode = Balance_RowMax;
 
+/* After balancing, replace the square-root fold and histogram with ln(count). */
+global_variable
+u08
+Log_Signal = 0;
+
 #define Min_Image_Depth 10
 // LOD = Level of Detail
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
@@ -2179,6 +2184,56 @@ BalanceModeName()
     return "row-max";
 }
 
+/* Map balanced counts to 0–255 with a global log.
+   A zero stays 0. The smallest positive count becomes 1, so it is not erased,
+   and the largest count becomes 255. */
+global_function
+void
+QuantiseLog(u16 **image, u32 n)
+{
+    f64 low = 0.0;
+    f64 high = 0.0;
+    u08 seen = 0;
+
+    for (u32 row = 0; row < n; ++row)
+    {
+        u32 width = n - row;
+        for (u32 dist = 0; dist < width; ++dist)
+        {
+            u16 count = image[row][dist];
+            if (!count) continue;
+            f64 value = (f64)count;
+            if (!seen || value < low) low = value;
+            if (value > high) high = value;
+            seen = 1;
+        }
+    }
+
+    if (!seen || high <= 0.0) return;
+
+    f64 span = log(high) - log(low);
+    for (u32 row = 0; row < n; ++row)
+    {
+        u32 width = n - row;
+        for (u32 dist = 0; dist < width; ++dist)
+        {
+            u16 count = image[row][dist];
+            if (!count) continue;
+            u32 byte = 255;
+            if (span > 1e-12)
+            {
+                f64 unit = (log((f64)count) - log(low)) / span;
+                if (unit < 0.0) unit = 0.0;
+                if (unit > 1.0) unit = 1.0;
+                byte = (u32)(unit * 255.0 + 0.5);
+            }
+            if (byte < 1) byte = 1;
+            if (byte > 255) byte = 255;
+            image[row][dist] = (u16)byte;
+        }
+    }
+}
+
 global_function
 void
 ContrastEqualisation(void *in)
@@ -2252,6 +2307,12 @@ ContrastEqualisation(void *in)
     else
     {
         BalanceContacts(image, nPixels);
+    }
+
+    if (Log_Signal)
+    {
+        QuantiseLog(image, nPixels);
+        return;
     }
 
     ForLoop(nPixels)
@@ -2673,7 +2734,8 @@ MainArgs
                               --mapq {10}
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
-                              --balance ({max}, vc, vcsqrt, ice, kr))
+                              --balance ({max}, vc, vcsqrt, ice, kr)
+                              --log)
                               {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
@@ -2832,6 +2894,10 @@ MainArgs
                 exit(EXIT_FAILURE);
             }
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--log"))
+        {
+            Log_Signal = 1;
+        }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--highRes"))
         {
             highRes = 1;
@@ -2926,7 +2992,7 @@ MainArgs
     {
         ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
     }
-    PrintStatus("Equalising contrast (%s)...", BalanceModeName());
+    PrintStatus("Equalising contrast (%s%s)...", BalanceModeName(), Log_Signal ? ", log" : "");
     ThreadPoolWait(Thread_Pool);
     
     CreateDXTTextures();

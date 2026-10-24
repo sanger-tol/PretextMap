@@ -40,6 +40,7 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
 * --balance {max, vc, vcsqrt, ice, kr}: contact balance on PretextMap's own count matrix, before the square-root fold. `max` (default) is the original row-maximum equalisation. `vc` and `vcsqrt` are one-shot coverage weights, `ice` is iterative correction, `kr` is Knight–Ruiz. A bin with no contacts gets weight 0.<br/>
+* --log: after balancing, store ln(count) in the 0–255 bytes and skip the square-root fold and histogram. Zero stays 0. The smallest positive count becomes 1 and the largest becomes 255.<br/>
 
 example:<br/>
 ```sh
