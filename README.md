@@ -39,6 +39,7 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --mapq sets a minimum mapping quality filter (default: 10)<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
+* --balance {max, vc, vcsqrt, ice, kr}: contact balance on PretextMap's own count matrix, before the square-root fold. `max` (default) is the original row-maximum equalisation. `vc` and `vcsqrt` are one-shot coverage weights, `ice` is iterative correction, `kr` is Knight–Ruiz. A bin with no contacts gets weight 0.<br/>
 
 example:<br/>
 ```sh

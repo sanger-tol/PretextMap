@@ -397,6 +397,18 @@ global_variable
 u32
 Max_Image_Depth = 15;
 
+/* Contact balance, applied to each LOD's count matrix before the sqrt fold.
+   RowMax is the original PretextMap loop and stays the default. */
+#define Balance_RowMax 0
+#define Balance_VC 1
+#define Balance_VCSqrt 2
+#define Balance_ICE 3
+#define Balance_KR 4
+
+global_variable
+u32
+Balance_Mode = Balance_RowMax;
+
 #define Min_Image_Depth 10
 // LOD = Level of Detail
 #define Number_of_LODs (Max_Image_Depth - Min_Image_Depth + 1)
@@ -1801,7 +1813,371 @@ CreateMipMap(void *in)
     }
 }
 
-#define Contrast_Histogram_Cutoff_Slope 3 
+#define Contrast_Histogram_Cutoff_Slope 3
+
+/* image[row][distance] stores the contact between row and row+distance.
+   The matrix is symmetric, so a matvec adds every off-diagonal count to both bins. */
+global_function
+void
+SymvUpper(u16 **image, u32 n, f64 *right, f64 *out)
+{
+    memset(out, 0, (size_t)n * sizeof(f64));
+
+    for (u32 row = 0; row < n; ++row)
+    {
+        u16 *cells = image[row];
+        f64 left = right[row];
+        u32 width = n - row;
+
+        for (u32 dist = 0; dist < width; ++dist)
+        {
+            f64 count = (f64)cells[dist];
+            u32 col = row + dist;
+
+            out[row] += count * right[col];
+            if (dist) out[col] += count * left;
+        }
+    }
+}
+
+global_function
+f64
+BalancedSpread(u32 n, f64 *weight, f64 *ax)
+{
+    f64 sum = 0.0;
+    u32 nnz = 0;
+
+    for (u32 bin = 0; bin < n; ++bin)
+    {
+        if (weight[bin] == 0.0) continue;
+        f64 row = weight[bin] * ax[bin];
+        if (row > 0.0)
+        {
+            sum += row;
+            ++nnz;
+        }
+    }
+
+    if (!nnz) return 0.0;
+
+    f64 mean = sum / (f64)nnz;
+    f64 spread = 0.0;
+    for (u32 bin = 0; bin < n; ++bin)
+    {
+        if (weight[bin] == 0.0) continue;
+        f64 row = weight[bin] * ax[bin];
+        if (row <= 0.0) continue;
+        f64 rel = fabs(row / mean - 1.0);
+        if (rel > spread) spread = rel;
+    }
+    return spread;
+}
+
+/* Scale count * w[i] * w[j] so the brightest stored cell lands on 32768,
+   which is where the original row-max loop leaves the image before the sqrt fold. */
+global_function
+void
+ApplyBalanceWeights(u16 **image, u32 n, f64 *weight)
+{
+    f64 peak = 0.0;
+
+    for (u32 row = 0; row < n; ++row)
+    {
+        u32 width = n - row;
+        for (u32 dist = 0; dist < width; ++dist)
+        {
+            f64 balanced = (f64)image[row][dist] * weight[row] * weight[row + dist];
+            if (balanced > peak) peak = balanced;
+        }
+    }
+
+    if (peak <= 0.0) return;
+
+    f64 scale = (f64)(1 << 15) / peak;
+    for (u32 row = 0; row < n; ++row)
+    {
+        u32 width = n - row;
+        for (u32 dist = 0; dist < width; ++dist)
+        {
+            f64 balanced = (f64)image[row][dist] * weight[row] * weight[row + dist] * scale;
+            if (balanced < 0.0) balanced = 0.0;
+            if (balanced > 65535.0) balanced = 65535.0;
+            image[row][dist] = (u16)(balanced + 0.5);
+        }
+    }
+}
+
+global_function
+void
+BalanceCoverage(u16 **image, u32 n, f64 *weight, f64 *ones, f64 *coverage, u08 squareRoot)
+{
+    for (u32 bin = 0; bin < n; ++bin) ones[bin] = 1.0;
+    SymvUpper(image, n, ones, coverage);
+
+    for (u32 bin = 0; bin < n; ++bin)
+    {
+        if (coverage[bin] > 0.0)
+        {
+            weight[bin] = squareRoot ? 1.0 / sqrt(coverage[bin]) : 1.0 / coverage[bin];
+        }
+        else
+        {
+            weight[bin] = 0.0;
+        }
+    }
+}
+
+/* Imakaev et al. 2012. Weights stay outside the matrix: each pass is one matvec. */
+global_function
+void
+BalanceICE(u16 **image, u32 n, f64 *weight, f64 *margin)
+{
+    for (u32 bin = 0; bin < n; ++bin) weight[bin] = 1.0;
+
+    for (u32 iter = 0; iter < 200; ++iter)
+    {
+        SymvUpper(image, n, weight, margin);
+
+        f64 sum = 0.0;
+        u32 nnz = 0;
+        for (u32 bin = 0; bin < n; ++bin)
+        {
+            f64 row = weight[bin] * margin[bin];
+            margin[bin] = row;
+            if (row > 0.0)
+            {
+                sum += row;
+                ++nnz;
+            }
+        }
+        if (!nnz) return;
+
+        f64 mean = sum / (f64)nnz;
+        f64 spread = 0.0;
+        for (u32 bin = 0; bin < n; ++bin)
+        {
+            f64 row = margin[bin];
+            if (row > 0.0)
+            {
+                f64 rel = fabs(row / mean - 1.0);
+                if (rel > spread) spread = rel;
+                weight[bin] *= sqrt(mean / row);
+            }
+            else
+            {
+                weight[bin] = 0.0;
+            }
+        }
+
+        if (spread < 1e-4) return;
+    }
+}
+
+/* Knight and Ruiz, IMA J. Numer. Anal. 2013, inner-outer iteration.
+   y is a multiplicative step, restarted from 1. x <- x .* y, and the step is
+   kept inside [0.1, 3] so one pass cannot wipe a bin out. */
+global_function
+void
+BalanceKR(u16 **image, u32 n, f64 *weight, f64 *ax, f64 *residual, f64 *precond, f64 *direction, f64 *jdir, f64 *scratch, f64 *delta, f64 *trial)
+{
+    f64 tol = 1e-6;
+    f64 lower = 0.1;
+    f64 upper = 3.0;
+    f64 shrink = 0.9;
+    f64 etaMax = 0.1;
+    f64 eta = etaMax;
+    f64 stopTol = tol * 0.5;
+    f64 residualTarget = tol * tol;
+
+    for (u32 bin = 0; bin < n; ++bin) weight[bin] = 1.0;
+    SymvUpper(image, n, weight, ax);
+    for (u32 bin = 0; bin < n; ++bin)
+    {
+        if (ax[bin] <= 0.0) weight[bin] = 0.0;
+    }
+
+    SymvUpper(image, n, weight, ax);
+    f64 rho = 0.0;
+    for (u32 bin = 0; bin < n; ++bin)
+    {
+        trial[bin] = weight[bin] * ax[bin];
+        residual[bin] = weight[bin] > 0.0 ? 1.0 - trial[bin] : 0.0;
+        rho += residual[bin] * residual[bin];
+    }
+
+    f64 rout = rho;
+    f64 rold = rout;
+    for (u32 outer = 0; outer < 60 && rout > residualTarget; ++outer)
+    {
+        for (u32 bin = 0; bin < n; ++bin) delta[bin] = 1.0;
+
+        f64 innerTol = eta * eta * rout;
+        if (innerTol < residualTarget) innerTol = residualTarget;
+
+        f64 rhoKm1 = rho;
+        f64 rhoKm2 = rho;
+        for (u32 inner = 0; inner < 40 && rhoKm1 > innerTol; ++inner)
+        {
+            if (inner == 0)
+            {
+                rhoKm1 = 0.0;
+                for (u32 bin = 0; bin < n; ++bin)
+                {
+                    precond[bin] = trial[bin] > 0.0 ? residual[bin] / trial[bin] : 0.0;
+                    direction[bin] = precond[bin];
+                    rhoKm1 += residual[bin] * precond[bin];
+                }
+            }
+            else
+            {
+                f64 beta = rhoKm2 != 0.0 ? rhoKm1 / rhoKm2 : 0.0;
+                for (u32 bin = 0; bin < n; ++bin)
+                {
+                    direction[bin] = precond[bin] + beta * direction[bin];
+                }
+            }
+
+            for (u32 bin = 0; bin < n; ++bin) scratch[bin] = weight[bin] * direction[bin];
+            SymvUpper(image, n, scratch, ax);
+
+            f64 denom = 0.0;
+            for (u32 bin = 0; bin < n; ++bin)
+            {
+                jdir[bin] = weight[bin] * ax[bin] + trial[bin] * direction[bin];
+                denom += direction[bin] * jdir[bin];
+            }
+            if (denom <= 1e-30) break;
+
+            f64 alpha = rhoKm1 / denom;
+            f64 yMin = 1e300;
+            f64 yMax = -1e300;
+            for (u32 bin = 0; bin < n; ++bin)
+            {
+                if (weight[bin] == 0.0) continue;
+                f64 yNew = delta[bin] + alpha * direction[bin];
+                if (yNew < yMin) yMin = yNew;
+                if (yNew > yMax) yMax = yNew;
+            }
+
+            if (yMin <= lower)
+            {
+                f64 gamma = 1e300;
+                for (u32 bin = 0; bin < n; ++bin)
+                {
+                    if (weight[bin] == 0.0 || direction[bin] >= 0.0) continue;
+                    f64 step = (lower - delta[bin]) / direction[bin];
+                    if (step < gamma) gamma = step;
+                }
+                if (gamma < 0.0 || gamma > 1e299) break;
+                for (u32 bin = 0; bin < n; ++bin) delta[bin] += gamma * direction[bin];
+                break;
+            }
+
+            if (yMax >= upper)
+            {
+                f64 gamma = 1e300;
+                for (u32 bin = 0; bin < n; ++bin)
+                {
+                    if (weight[bin] == 0.0 || direction[bin] <= 0.0) continue;
+                    f64 yNew = delta[bin] + alpha * direction[bin];
+                    if (yNew <= upper) continue;
+                    f64 step = (upper - delta[bin]) / direction[bin];
+                    if (step < gamma) gamma = step;
+                }
+                if (gamma < 0.0 || gamma > 1e299) break;
+                for (u32 bin = 0; bin < n; ++bin) delta[bin] += gamma * direction[bin];
+                break;
+            }
+
+            for (u32 bin = 0; bin < n; ++bin) delta[bin] += alpha * direction[bin];
+            rhoKm2 = rhoKm1;
+            rhoKm1 = 0.0;
+            for (u32 bin = 0; bin < n; ++bin)
+            {
+                residual[bin] -= alpha * jdir[bin];
+                precond[bin] = trial[bin] > 0.0 ? residual[bin] / trial[bin] : 0.0;
+                rhoKm1 += residual[bin] * precond[bin];
+            }
+        }
+
+        for (u32 bin = 0; bin < n; ++bin) weight[bin] *= delta[bin];
+
+        SymvUpper(image, n, weight, ax);
+        rho = 0.0;
+        for (u32 bin = 0; bin < n; ++bin)
+        {
+            trial[bin] = weight[bin] * ax[bin];
+            residual[bin] = weight[bin] > 0.0 ? 1.0 - trial[bin] : 0.0;
+            rho += residual[bin] * residual[bin];
+        }
+        rout = rho;
+
+        f64 ratio = rold > 0.0 ? rout / rold : 0.0;
+        rold = rout;
+        f64 residualNorm = sqrt(rout);
+        f64 etaPrev = eta;
+        eta = shrink * ratio;
+        if (shrink * etaPrev * etaPrev > 0.1)
+        {
+            f64 floorEta = shrink * etaPrev * etaPrev;
+            if (floorEta > eta) eta = floorEta;
+        }
+        if (eta > etaMax) eta = etaMax;
+        if (residualNorm > 0.0)
+        {
+            f64 etaFloor = stopTol / residualNorm;
+            if (eta < etaFloor) eta = etaFloor;
+        }
+    }
+}
+
+global_function
+void
+BalanceContacts(u16 **image, u32 n)
+{
+    f64 *weight = 0;
+    f64 *scratch = 0;
+    u32 vectors = Balance_Mode == Balance_KR ? 9 : 3;
+
+    weight = (f64 *)malloc((size_t)vectors * (size_t)n * sizeof(f64));
+    if (!weight)
+    {
+        PrintError("Out of memory while balancing contacts");
+        exit(EXIT_FAILURE);
+    }
+    scratch = weight + n;
+
+    if (Balance_Mode == Balance_VC)
+    {
+        BalanceCoverage(image, n, weight, scratch, scratch + n, 0);
+    }
+    else if (Balance_Mode == Balance_VCSqrt)
+    {
+        BalanceCoverage(image, n, weight, scratch, scratch + n, 1);
+    }
+    else if (Balance_Mode == Balance_ICE)
+    {
+        BalanceICE(image, n, weight, scratch);
+    }
+    else if (Balance_Mode == Balance_KR)
+    {
+        BalanceKR(image, n, weight, scratch, scratch + n, scratch + 2 * n, scratch + 3 * n, scratch + 4 * n, scratch + 5 * n, scratch + 6 * n, scratch + 7 * n);
+    }
+
+    ApplyBalanceWeights(image, n, weight);
+    free(weight);
+}
+
+global_function
+const char *
+BalanceModeName()
+{
+    if (Balance_Mode == Balance_VC) return "VC";
+    if (Balance_Mode == Balance_VCSqrt) return "VC_SQRT";
+    if (Balance_Mode == Balance_ICE) return "ICE";
+    if (Balance_Mode == Balance_KR) return "KR";
+    return "row-max";
+}
 
 global_function
 void
@@ -1822,6 +2198,8 @@ ContrastEqualisation(void *in)
 #define KL_Norm_Range (1 << 15)
 #define KL_Norm_Tol (1e-4)
 #define KL_Max_Iter 128
+    if (Balance_Mode == Balance_RowMax)
+    {
     do
     {
         ForLoop(nPixels)
@@ -1870,6 +2248,11 @@ ContrastEqualisation(void *in)
             maxNorm = Max(maxNorm, tmp);
         }
     } while (maxNorm > (f32)KL_Norm_Tol && klIter++ < KL_Max_Iter);
+    }
+    else
+    {
+        BalanceContacts(image, nPixels);
+    }
 
     ForLoop(nPixels)
     {
@@ -2289,7 +2672,8 @@ MainArgs
                               --sortorder ({descend}, ascend)
                               --mapq {10}
                               --filterInclude "seq_ [, seq_]*"
-                              --filterExclude "seq_ [, seq_]*")
+                              --filterExclude "seq_ [, seq_]*"
+                              --balance ({max}, vc, vcsqrt, ice, kr))
                               {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
@@ -2415,6 +2799,39 @@ MainArgs
             ++index;
             filterExcludeString = ArgBuffer[index];
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--balance"))
+        {
+            if (index + 1 >= (u32)ArgCount) {
+                PrintError("Missing value after --balance");
+                exit(EXIT_FAILURE);
+            }
+            ++index;
+            if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"max"))
+            {
+                Balance_Mode = Balance_RowMax;
+            }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"vc"))
+            {
+                Balance_Mode = Balance_VC;
+            }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"vcsqrt"))
+            {
+                Balance_Mode = Balance_VCSqrt;
+            }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"ice"))
+            {
+                Balance_Mode = Balance_ICE;
+            }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"kr"))
+            {
+                Balance_Mode = Balance_KR;
+            }
+            else
+            {
+                PrintError("Invalid option for balance: \'%s\' (use max, vc, vcsqrt, ice or kr)", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
+            }
+        }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--highRes"))
         {
             highRes = 1;
@@ -2509,7 +2926,7 @@ MainArgs
     {
         ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
     }
-    PrintStatus("Equalising contrast...");
+    PrintStatus("Equalising contrast (%s)...", BalanceModeName());
     ThreadPoolWait(Thread_Pool);
     
     CreateDXTTextures();
