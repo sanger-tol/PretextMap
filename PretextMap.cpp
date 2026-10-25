@@ -409,7 +409,8 @@ global_variable
 u32
 Balance_Mode = Balance_RowMax;
 
-/* After balancing, replace the square-root fold and histogram with ln(count). */
+/* Sum fine counts into each coarser level, then store ln(count).
+   Skips row-max balancing, the weighted-median mipmap, the square-root fold and the histogram. */
 global_variable
 u08
 Log_Signal = 0;
@@ -2184,25 +2185,72 @@ BalanceModeName()
     return "row-max";
 }
 
-/* Map balanced counts to 0–255 with a global log.
-   A zero stays 0. The smallest positive count becomes 1, so it is not erased,
-   and the largest count becomes 255. */
+/* Sum of the bin×bin block of finest-level counts whose top-left corner is (row, col).
+   Each stored contact is added once. A diagonal block also contains the lower
+   triangle, and PixelLookup would return those pairs a second time. */
+global_function
+u64
+FineBlockSum(u32 row, u32 col, u32 bin)
+{
+    u64 sum = 0;
+    u32 yEnd = row + bin;
+    u32 xEnd = col + bin;
+
+    for (u32 y = row; y < yEnd; ++y)
+    {
+        for (u32 x = col; x < xEnd; ++x)
+        {
+            if (x < y) continue;
+            sum += (u64)PixelLookup(x, y);
+        }
+    }
+    return sum;
+}
+
+global_function
+u16
+LogByte(u64 count, f64 low, f64 span)
+{
+    u32 byte = 255;
+
+    if (!count) return 0;
+    if (span > 1e-12)
+    {
+        f64 unit = (log((f64)count) - log(low)) / span;
+        if (unit < 0.0) unit = 0.0;
+        if (unit > 1.0) unit = 1.0;
+        byte = (u32)(unit * 255.0 + 0.5);
+    }
+    if (byte < 1) byte = 1;
+    if (byte > 255) byte = 255;
+    return (u16)byte;
+}
+
+/* One resolution. Level 0 is the finest counts. A coarser level sums the
+   finest cells it covers, then maps that level's own min and max through ln.
+   Coarser levels only read Images[0], so they must finish before level 0 is overwritten. */
 global_function
 void
-QuantiseLog(u16 **image, u32 n)
+SumLogLevel(void *in)
 {
+    u32 level = *((u32 *)in);
+    u32 bin = 1u << level;
+    u32 nPixels = Pixel_Resolution(Max_Image_Depth - level);
+    u16 **image = (u16 **)Images[level];
     f64 low = 0.0;
     f64 high = 0.0;
     u08 seen = 0;
 
-    for (u32 row = 0; row < n; ++row)
+    for (u32 row = 0; row < nPixels; ++row)
     {
-        u32 width = n - row;
+        u32 width = nPixels - row;
         for (u32 dist = 0; dist < width; ++dist)
         {
-            u16 count = image[row][dist];
-            if (!count) continue;
-            f64 value = (f64)count;
+            u64 sum = level
+                ? FineBlockSum(row * bin, (row + dist) * bin, bin)
+                : (u64)image[row][dist];
+            if (!sum) continue;
+            f64 value = (f64)sum;
             if (!seen || value < low) low = value;
             if (value > high) high = value;
             seen = 1;
@@ -2212,24 +2260,15 @@ QuantiseLog(u16 **image, u32 n)
     if (!seen || high <= 0.0) return;
 
     f64 span = log(high) - log(low);
-    for (u32 row = 0; row < n; ++row)
+    for (u32 row = 0; row < nPixels; ++row)
     {
-        u32 width = n - row;
+        u32 width = nPixels - row;
         for (u32 dist = 0; dist < width; ++dist)
         {
-            u16 count = image[row][dist];
-            if (!count) continue;
-            u32 byte = 255;
-            if (span > 1e-12)
-            {
-                f64 unit = (log((f64)count) - log(low)) / span;
-                if (unit < 0.0) unit = 0.0;
-                if (unit > 1.0) unit = 1.0;
-                byte = (u32)(unit * 255.0 + 0.5);
-            }
-            if (byte < 1) byte = 1;
-            if (byte > 255) byte = 255;
-            image[row][dist] = (u16)byte;
+            u64 sum = level
+                ? FineBlockSum(row * bin, (row + dist) * bin, bin)
+                : (u64)image[row][dist];
+            image[row][dist] = LogByte(sum, low, span);
         }
     }
 }
@@ -2307,12 +2346,6 @@ ContrastEqualisation(void *in)
     else
     {
         BalanceContacts(image, nPixels);
-    }
-
-    if (Log_Signal)
-    {
-        QuantiseLog(image, nPixels);
-        return;
     }
 
     ForLoop(nPixels)
@@ -2966,34 +2999,58 @@ MainArgs
     printf("\n");
     if (Global_Error_Flag) exit(EXIT_FAILURE);
 
-    MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, Number_of_LODs - 1);
     u32 mipMapLevels[Number_of_LODs];
     ForLoop(Number_of_LODs)
     {
         mipMapLevels[index] = index;
-        
-        if (index)
-        {
-            MipMap_Weighted_Median_Kernels[index - 1] = PushStruct(Working_Set, weighted_median_kernel);
-            MipMap_Weighted_Median_Kernels[index - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * index));
-            MipMap_Weighted_Median_Kernels[index - 1]->weights = PushArray(Working_Set, f32*, 1 << (index - 1));
-            ForLoop2(1 << (index - 1))
-            {
-                MipMap_Weighted_Median_Kernels[index - 1]->weights[index2] = PushArray(Working_Set, f32, (1 << (index - 1)) - index2);
-            }
+    }
 
-            ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + index));
-        }
-    }
-   
-    PrintStatus("Creating MipMaps...");
-    ThreadPoolWait(Thread_Pool);
-    ForLoop(Number_of_LODs)
+    if (Log_Signal)
     {
-        ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
+        PrintStatus("Summing raw counts and logging each resolution...");
+        if (Balance_Mode != Balance_RowMax)
+        {
+            PrintStatus("--log keeps the raw counts, so --balance is not applied");
+        }
+        ForLoop(Number_of_LODs)
+        {
+            if (index)
+            {
+                ThreadPoolAddTask(Thread_Pool, SumLogLevel, (void *)(mipMapLevels + index));
+            }
+        }
+        ThreadPoolWait(Thread_Pool);
+        /* Level 0 overwrites the finest counts, after every coarser level has read them. */
+        SumLogLevel((void *)mipMapLevels);
     }
-    PrintStatus("Equalising contrast (%s%s)...", BalanceModeName(), Log_Signal ? ", log" : "");
-    ThreadPoolWait(Thread_Pool);
+    else
+    {
+        MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, Number_of_LODs - 1);
+        ForLoop(Number_of_LODs)
+        {
+            if (index)
+            {
+                MipMap_Weighted_Median_Kernels[index - 1] = PushStruct(Working_Set, weighted_median_kernel);
+                MipMap_Weighted_Median_Kernels[index - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * index));
+                MipMap_Weighted_Median_Kernels[index - 1]->weights = PushArray(Working_Set, f32*, 1 << (index - 1));
+                ForLoop2(1 << (index - 1))
+                {
+                    MipMap_Weighted_Median_Kernels[index - 1]->weights[index2] = PushArray(Working_Set, f32, (1 << (index - 1)) - index2);
+                }
+
+                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + index));
+            }
+        }
+
+        PrintStatus("Creating MipMaps...");
+        ThreadPoolWait(Thread_Pool);
+        ForLoop(Number_of_LODs)
+        {
+            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
+        }
+        PrintStatus("Equalising contrast (%s)...", BalanceModeName());
+        ThreadPoolWait(Thread_Pool);
+    }
     
     CreateDXTTextures();
     PrintStatus("Compressing textures...");
