@@ -16,19 +16,20 @@ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
 */
 
-#ifndef MAX_LOG_NORMALISATION_H
-#define MAX_LOG_NORMALISATION_H
+#ifndef MAX_NORM_H
+#define MAX_NORM_H
 
 #include "Header.h"
 
-struct max_log_normalisation_task
+struct max_norm_task
 {
     u16 **finestImage;
     u16 **image;
     u32 finestPixels;
     u32 level;
+    u32 numberOfLevels;
 };
 
-void MaxLogNormalisation(void *in);
+void max_norm(void *in);
 
 #endif

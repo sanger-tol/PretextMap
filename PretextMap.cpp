@@ -27,7 +27,7 @@ author: Ed Harry, Chenxi Zhou, Ying Sims
 #define PretextMap_Version "PretextMap Version " String(PV)
 
 #include "Header.h"
-#include "MaxLogNormalisation.h"
+#include "max_norm.h"
 #include <math.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -410,13 +410,10 @@ global_variable
 u32
 Balance_Mode = Balance_RowMax;
 
-/* Use log-normalized raw counts at coarse levels and the standard contrast
-   pipeline at the finest levels. */
+/* Use raw-count log mapping with a smooth contrast curve across resolutions. */
 global_variable
 u08
 Log_Signal = 0;
-
-#define Log_Fine_Detail_LODs 3
 
 #define Min_Image_Depth 10
 // LOD = Level of Detail
@@ -2683,7 +2680,7 @@ MainArgs
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
                               --balance ({max}, vc, vcsqrt, ice, kr)
-                              --log: log at coarse LODs, standard contrast at finest LODs)
+                              --log: log counts with smooth contrast across resolutions)
                               {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
@@ -2922,50 +2919,32 @@ MainArgs
 
     if (Log_Signal)
     {
-        u32 fineLodCount = Number_of_LODs < Log_Fine_Detail_LODs
-            ? Number_of_LODs
-            : Log_Fine_Detail_LODs;
         u32 finestPixels = Pixel_Resolution(Max_Image_Depth);
 
-        PrintStatus("--log: using log normalization for coarse levels and standard contrast for the finest %u levels", fineLodCount);
+        PrintStatus("--log: summing raw counts and smoothly adjusting contrast across resolutions");
         if (Balance_Mode != Balance_RowMax)
         {
-            PrintStatus("--balance applies only to the finest levels; coarse log levels use raw counts");
+            PrintStatus("--balance is not applied together with --log");
         }
 
-        max_log_normalisation_task *logTasks = PushArray(Working_Set, max_log_normalisation_task, Number_of_LODs);
-        for (u32 level = fineLodCount; level < Number_of_LODs; ++level)
+        max_norm_task *logTasks = PushArray(Working_Set, max_norm_task, Number_of_LODs);
+        for (u32 level = 1; level < Number_of_LODs; ++level)
         {
             logTasks[level].finestImage = (u16 **)Images[0];
             logTasks[level].image = (u16 **)Images[level];
             logTasks[level].finestPixels = finestPixels;
             logTasks[level].level = level;
-            ThreadPoolAddTask(Thread_Pool, MaxLogNormalisation, (logTasks + level));
-        }
-
-        if (fineLodCount > 1)
-        {
-            MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, fineLodCount - 1);
-            for (u32 level = 1; level < fineLodCount; ++level)
-            {
-                MipMap_Weighted_Median_Kernels[level - 1] = PushStruct(Working_Set, weighted_median_kernel);
-                MipMap_Weighted_Median_Kernels[level - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * level));
-                MipMap_Weighted_Median_Kernels[level - 1]->weights = PushArray(Working_Set, f32*, 1 << (level - 1));
-                for (u32 row = 0; row < (1u << (level - 1)); ++row)
-                {
-                    MipMap_Weighted_Median_Kernels[level - 1]->weights[row] =
-                        PushArray(Working_Set, f32, (1u << (level - 1)) - row);
-                }
-                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + level));
-            }
-        }
-
-        ThreadPoolWait(Thread_Pool);
-        for (u32 level = 0; level < fineLodCount; ++level)
-        {
-            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + level));
+            logTasks[level].numberOfLevels = Number_of_LODs;
+            ThreadPoolAddTask(Thread_Pool, max_norm, (logTasks + level));
         }
         ThreadPoolWait(Thread_Pool);
+
+        logTasks[0].finestImage = (u16 **)Images[0];
+        logTasks[0].image = (u16 **)Images[0];
+        logTasks[0].finestPixels = finestPixels;
+        logTasks[0].level = 0;
+        logTasks[0].numberOfLevels = Number_of_LODs;
+        max_norm(logTasks);
     }
     else
     {
