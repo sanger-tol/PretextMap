@@ -27,6 +27,7 @@ author: Ed Harry, Chenxi Zhou, Ying Sims
 #define PretextMap_Version "PretextMap Version " String(PV)
 
 #include "Header.h"
+#include "MaxLogNormalisation.h"
 #include <math.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -409,11 +410,13 @@ global_variable
 u32
 Balance_Mode = Balance_RowMax;
 
-/* Sum fine counts into each coarser level, then store ln(count).
-   Skips row-max balancing, the weighted-median mipmap, the square-root fold and the histogram. */
+/* Use log-normalized raw counts at coarse levels and the standard contrast
+   pipeline at the finest levels. */
 global_variable
 u08
 Log_Signal = 0;
+
+#define Log_Fine_Detail_LODs 3
 
 #define Min_Image_Depth 10
 // LOD = Level of Detail
@@ -2185,94 +2188,6 @@ BalanceModeName()
     return "row-max";
 }
 
-/* Sum of the bin×bin block of finest-level counts whose top-left corner is (row, col).
-   Each stored contact is added once. A diagonal block also contains the lower
-   triangle, and PixelLookup would return those pairs a second time. */
-global_function
-u64
-FineBlockSum(u32 row, u32 col, u32 bin)
-{
-    u64 sum = 0;
-    u32 yEnd = row + bin;
-    u32 xEnd = col + bin;
-
-    for (u32 y = row; y < yEnd; ++y)
-    {
-        for (u32 x = col; x < xEnd; ++x)
-        {
-            if (x < y) continue;
-            sum += (u64)PixelLookup(x, y);
-        }
-    }
-    return sum;
-}
-
-global_function
-u16
-LogByte(u64 count, f64 low, f64 span)
-{
-    u32 byte = 255;
-
-    if (!count) return 0;
-    if (span > 1e-12)
-    {
-        f64 unit = (log((f64)count) - log(low)) / span;
-        if (unit < 0.0) unit = 0.0;
-        if (unit > 1.0) unit = 1.0;
-        byte = (u32)(unit * 255.0 + 0.5);
-    }
-    if (byte < 1) byte = 1;
-    if (byte > 255) byte = 255;
-    return (u16)byte;
-}
-
-/* One resolution. Level 0 is the finest counts. A coarser level sums the
-   finest cells it covers, then maps that level's own min and max through ln.
-   Coarser levels only read Images[0], so they must finish before level 0 is overwritten. */
-global_function
-void
-SumLogLevel(void *in)
-{
-    u32 level = *((u32 *)in);
-    u32 bin = 1u << level;
-    u32 nPixels = Pixel_Resolution(Max_Image_Depth - level);
-    u16 **image = (u16 **)Images[level];
-    f64 low = 0.0;
-    f64 high = 0.0;
-    u08 seen = 0;
-
-    for (u32 row = 0; row < nPixels; ++row)
-    {
-        u32 width = nPixels - row;
-        for (u32 dist = 0; dist < width; ++dist)
-        {
-            u64 sum = level
-                ? FineBlockSum(row * bin, (row + dist) * bin, bin)
-                : (u64)image[row][dist];
-            if (!sum) continue;
-            f64 value = (f64)sum;
-            if (!seen || value < low) low = value;
-            if (value > high) high = value;
-            seen = 1;
-        }
-    }
-
-    if (!seen || high <= 0.0) return;
-
-    f64 span = log(high) - log(low);
-    for (u32 row = 0; row < nPixels; ++row)
-    {
-        u32 width = nPixels - row;
-        for (u32 dist = 0; dist < width; ++dist)
-        {
-            u64 sum = level
-                ? FineBlockSum(row * bin, (row + dist) * bin, bin)
-                : (u64)image[row][dist];
-            image[row][dist] = LogByte(sum, low, span);
-        }
-    }
-}
-
 global_function
 void
 ContrastEqualisation(void *in)
@@ -2768,7 +2683,7 @@ MainArgs
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
                               --balance ({max}, vc, vcsqrt, ice, kr)
-                              --log)
+                              --log: log at coarse LODs, standard contrast at finest LODs)
                               {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
@@ -3007,21 +2922,50 @@ MainArgs
 
     if (Log_Signal)
     {
-        PrintStatus("Summing raw counts and logging each resolution...");
+        u32 fineLodCount = Number_of_LODs < Log_Fine_Detail_LODs
+            ? Number_of_LODs
+            : Log_Fine_Detail_LODs;
+        u32 finestPixels = Pixel_Resolution(Max_Image_Depth);
+
+        PrintStatus("--log: using log normalization for coarse levels and standard contrast for the finest %u levels", fineLodCount);
         if (Balance_Mode != Balance_RowMax)
         {
-            PrintStatus("--log keeps the raw counts, so --balance is not applied");
+            PrintStatus("--balance applies only to the finest levels; coarse log levels use raw counts");
         }
-        ForLoop(Number_of_LODs)
+
+        max_log_normalisation_task *logTasks = PushArray(Working_Set, max_log_normalisation_task, Number_of_LODs);
+        for (u32 level = fineLodCount; level < Number_of_LODs; ++level)
         {
-            if (index)
+            logTasks[level].finestImage = (u16 **)Images[0];
+            logTasks[level].image = (u16 **)Images[level];
+            logTasks[level].finestPixels = finestPixels;
+            logTasks[level].level = level;
+            ThreadPoolAddTask(Thread_Pool, MaxLogNormalisation, (logTasks + level));
+        }
+
+        if (fineLodCount > 1)
+        {
+            MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, fineLodCount - 1);
+            for (u32 level = 1; level < fineLodCount; ++level)
             {
-                ThreadPoolAddTask(Thread_Pool, SumLogLevel, (void *)(mipMapLevels + index));
+                MipMap_Weighted_Median_Kernels[level - 1] = PushStruct(Working_Set, weighted_median_kernel);
+                MipMap_Weighted_Median_Kernels[level - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * level));
+                MipMap_Weighted_Median_Kernels[level - 1]->weights = PushArray(Working_Set, f32*, 1 << (level - 1));
+                for (u32 row = 0; row < (1u << (level - 1)); ++row)
+                {
+                    MipMap_Weighted_Median_Kernels[level - 1]->weights[row] =
+                        PushArray(Working_Set, f32, (1u << (level - 1)) - row);
+                }
+                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + level));
             }
         }
+
         ThreadPoolWait(Thread_Pool);
-        /* Level 0 overwrites the finest counts, after every coarser level has read them. */
-        SumLogLevel((void *)mipMapLevels);
+        for (u32 level = 0; level < fineLodCount; ++level)
+        {
+            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + level));
+        }
+        ThreadPoolWait(Thread_Pool);
     }
     else
     {
