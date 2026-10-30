@@ -40,7 +40,7 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
 * --balance {max, vc, vcsqrt, ice, kr}: contact balance on PretextMap's own count matrix, before the square-root fold. `max` (default) is the original row-maximum equalisation. `vc` and `vcsqrt` are one-shot coverage weights, `ice` is iterative correction, `kr` is Knight–Ruiz. A bin with no contacts gets weight 0.<br/>
-* --log: sum raw counts into every resolution, then apply log mapping with a smooth contrast adjustment from linear log scaling at coarse levels to darker weak signal at fine levels. Zero stays 0. `--balance` is not applied together with `--log`.<br/>
+* --log: sum raw counts into every resolution, then apply log mapping with per-level percentile contrast stretching. Coarse levels retain all non-zero values; fine levels progressively clip the weakest 8% of non-zero cells and stretch the remaining signal for clearer local structure. This affects display values only; source counts are not modified. `--balance` is not applied together with `--log`.<br/>
 
 example:<br/>
 ```sh
