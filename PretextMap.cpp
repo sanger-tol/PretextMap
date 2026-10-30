@@ -410,10 +410,12 @@ global_variable
 u32
 Balance_Mode = Balance_RowMax;
 
-/* Use raw-count log mapping with a smooth contrast curve across resolutions. */
+/* Use log mapping for coarse raw-count levels when --log is enabled. */
 global_variable
 u08
 Log_Signal = 0;
+
+#define Log_Fine_Detail_LODs 3
 
 #define Min_Image_Depth 10
 // LOD = Level of Detail
@@ -2920,31 +2922,50 @@ MainArgs
     if (Log_Signal)
     {
         u32 finestPixels = Pixel_Resolution(Max_Image_Depth);
+        u32 fineLodCount = Number_of_LODs < Log_Fine_Detail_LODs
+            ? Number_of_LODs
+            : Log_Fine_Detail_LODs;
 
-        PrintStatus("--log: summing raw counts and smoothly adjusting contrast across resolutions");
+        PrintStatus("--log: log-normalizing coarse levels and using standard contrast for the finest %u levels", fineLodCount);
         if (Balance_Mode != Balance_RowMax)
         {
-            PrintStatus("--balance is not applied together with --log");
+            PrintStatus("--balance applies only to the finest levels; coarse log levels use raw counts");
         }
 
         max_norm_task *logTasks = PushArray(Working_Set, max_norm_task, Number_of_LODs);
-        for (u32 level = 1; level < Number_of_LODs; ++level)
+        for (u32 level = fineLodCount; level < Number_of_LODs; ++level)
         {
             logTasks[level].finestImage = (u16 **)Images[0];
             logTasks[level].image = (u16 **)Images[level];
             logTasks[level].finestPixels = finestPixels;
             logTasks[level].level = level;
-            logTasks[level].numberOfLevels = Number_of_LODs;
             ThreadPoolAddTask(Thread_Pool, max_norm, (logTasks + level));
         }
         ThreadPoolWait(Thread_Pool);
 
-        logTasks[0].finestImage = (u16 **)Images[0];
-        logTasks[0].image = (u16 **)Images[0];
-        logTasks[0].finestPixels = finestPixels;
-        logTasks[0].level = 0;
-        logTasks[0].numberOfLevels = Number_of_LODs;
-        max_norm(logTasks);
+        if (fineLodCount > 1)
+        {
+            MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, fineLodCount - 1);
+            for (u32 level = 1; level < fineLodCount; ++level)
+            {
+                MipMap_Weighted_Median_Kernels[level - 1] = PushStruct(Working_Set, weighted_median_kernel);
+                MipMap_Weighted_Median_Kernels[level - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * level));
+                MipMap_Weighted_Median_Kernels[level - 1]->weights = PushArray(Working_Set, f32*, 1 << (level - 1));
+                for (u32 row = 0; row < (1u << (level - 1)); ++row)
+                {
+                    MipMap_Weighted_Median_Kernels[level - 1]->weights[row] =
+                        PushArray(Working_Set, f32, (1u << (level - 1)) - row);
+                }
+                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + level));
+            }
+        }
+
+        ThreadPoolWait(Thread_Pool);
+        for (u32 level = 0; level < fineLodCount; ++level)
+        {
+            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + level));
+        }
+        ThreadPoolWait(Thread_Pool);
     }
     else
     {

@@ -27,7 +27,6 @@ struct max_norm_task
     u16 **image;
     u32 finestPixels;
     u32 level;
-    u32 numberOfLevels;
 };
 
 void max_norm(void *in);
