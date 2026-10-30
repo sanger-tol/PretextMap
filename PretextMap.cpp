@@ -28,6 +28,7 @@ author: Ed Harry, Chenxi Zhou, Ying Sims
 
 #include "Header.h"
 #include "max_norm.h"
+#include "juicer.h"
 #include <math.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -414,6 +415,14 @@ Balance_Mode = Balance_RowMax;
 global_variable
 u08
 Log_Signal = 0;
+
+global_variable
+juicer_mode
+Juicer_Mode = Juicer_None;
+
+global_variable
+u08
+Balance_Option_Set = 0;
 
 #define Log_Fine_Detail_LODs 3
 
@@ -2682,6 +2691,7 @@ MainArgs
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
                               --balance ({max}, vc, vcsqrt, ice, kr)
+                              --juicer {oe, balance}: distance-normalized or balanced raw-count display
                               --log: log counts with smooth contrast across resolutions)
                               {--highRes|--ultraRes}
 
@@ -2840,6 +2850,28 @@ MainArgs
                 PrintError("Invalid option for balance: \'%s\' (use max, vc, vcsqrt, ice or kr)", ArgBuffer[index]);
                 exit(EXIT_FAILURE);
             }
+            Balance_Option_Set = 1;
+        }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--juicer"))
+        {
+            if (index + 1 >= (u32)ArgCount) {
+                PrintError("Missing value after --juicer");
+                exit(EXIT_FAILURE);
+            }
+            ++index;
+            if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"oe"))
+            {
+                Juicer_Mode = Juicer_OE;
+            }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"balance"))
+            {
+                Juicer_Mode = Juicer_Balance;
+            }
+            else
+            {
+                PrintError("Invalid option for juicer: \'%s\' (use oe or balance)", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
+            }
         }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--log"))
         {
@@ -2856,6 +2888,29 @@ MainArgs
         else
         {
             PrintError("Unknown option: %s", ArgBuffer[index]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (Juicer_Mode != Juicer_None && Log_Signal)
+    {
+        PrintError("--juicer and --log cannot be used together");
+        exit(EXIT_FAILURE);
+    }
+    if (Juicer_Mode == Juicer_OE && Balance_Option_Set)
+    {
+        PrintError("--balance cannot be combined with --juicer oe");
+        exit(EXIT_FAILURE);
+    }
+    if (Juicer_Mode == Juicer_Balance)
+    {
+        if (!Balance_Option_Set)
+        {
+            Balance_Mode = Balance_KR;
+        }
+        else if (Balance_Mode == Balance_RowMax)
+        {
+            PrintError("--juicer balance requires --balance vc, vcsqrt, ice or kr; max is a display equalisation mode");
             exit(EXIT_FAILURE);
         }
     }
@@ -2919,7 +2974,62 @@ MainArgs
         mipMapLevels[index] = index;
     }
 
-    if (Log_Signal)
+    if (Juicer_Mode != Juicer_None)
+    {
+        const u32 sumWorkerCount = 3;
+        juicer_sum_task *sumTasks = PushArray(Working_Set, juicer_sum_task, sumWorkerCount);
+        for (u32 level = 1; level < Number_of_LODs; ++level)
+        {
+            u32 pixels = Pixel_Resolution(Max_Image_Depth - level);
+            for (u32 worker = 0; worker < sumWorkerCount; ++worker)
+            {
+                sumTasks[worker].sourceImage = (u16 **)Images[level - 1];
+                sumTasks[worker].image = (u16 **)Images[level];
+                sumTasks[worker].pixels = pixels;
+                sumTasks[worker].rowStart = pixels * worker / sumWorkerCount;
+                sumTasks[worker].rowEnd = pixels * (worker + 1) / sumWorkerCount;
+                ThreadPoolAddTask(Thread_Pool, juicer_find_max_sum, &sumTasks[worker]);
+            }
+            ThreadPoolWait(Thread_Pool);
+
+            u64 maxSum = 0;
+            for (u32 worker = 0; worker < sumWorkerCount; ++worker)
+            {
+                if (sumTasks[worker].maxSum > maxSum) maxSum = sumTasks[worker].maxSum;
+            }
+
+            f64 scale = maxSum > u16_max ? (f64)u16_max / (f64)maxSum : 1.0;
+            for (u32 worker = 0; worker < sumWorkerCount; ++worker)
+            {
+                sumTasks[worker].scale = scale;
+                ThreadPoolAddTask(Thread_Pool, juicer_sum_level, &sumTasks[worker]);
+            }
+            ThreadPoolWait(Thread_Pool);
+        }
+
+        if (Juicer_Mode == Juicer_OE)
+        {
+            PrintStatus("--juicer oe: calculating observed/expected signal per LOD");
+            juicer_oe_task *oeTasks = PushArray(Working_Set, juicer_oe_task, Number_of_LODs);
+            for (u32 level = 0; level < Number_of_LODs; ++level)
+            {
+                oeTasks[level].image = (u16 **)Images[level];
+                oeTasks[level].pixels = Pixel_Resolution(Max_Image_Depth - level);
+                ThreadPoolAddTask(Thread_Pool, juicer_observed_expected, (oeTasks + level));
+            }
+            ThreadPoolWait(Thread_Pool);
+        }
+        else
+        {
+            PrintStatus("--juicer balance: applying %s balance to raw-count sum levels", BalanceModeName());
+            ForLoop(Number_of_LODs)
+            {
+                ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
+            }
+            ThreadPoolWait(Thread_Pool);
+        }
+    }
+    else if (Log_Signal)
     {
         u32 finestPixels = Pixel_Resolution(Max_Image_Depth);
         u32 fineLodCount = Number_of_LODs < Log_Fine_Detail_LODs
