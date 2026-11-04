@@ -397,6 +397,10 @@ Min_Map_Quality = 10;
 
 global_variable
 u32
+Min_Map_Distance = 0;
+
+global_variable
+u32
 Max_Image_Depth = 15;
 
 /* Contact balance, applied to each LOD's count matrix before the sqrt fold.
@@ -617,6 +621,7 @@ ProcessBodyLine(void *in)
 
                 if (cont)
                 {
+                    contig *cont1 = cont;
                     u64 cummLen1 = cont->previousCumulativeLength;
                     u64 read1 = cummLen1 + relPos1;
 
@@ -636,7 +641,8 @@ ProcessBodyLine(void *in)
                         }
                     }
 
-                    if (cont)
+                    u64 distance = relPos1 > relPos2 ? relPos1 - relPos2 : relPos2 - relPos1;
+                    if (cont && (cont != cont1 || distance >= Min_Map_Distance))
                     {
                         u64 read2 = cummLen2 + relPos2;
 
@@ -2688,6 +2694,7 @@ MainArgs
                               (--sortby ({length}, name, nosort)
                               --sortorder ({descend}, ascend)
                               --mapq {10}
+                              --min-dist {0}: minimum same-contig mapping distance in bp
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
                               --balance ({max}, vc, vcsqrt, ice, kr)
@@ -2797,6 +2804,24 @@ MainArgs
             else
             {
                 PrintError("Invalid option for mapq, not a non-negative int: \'%s\'", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
+            }
+        }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--min-dist"))
+        {
+            if (index + 1 >= (u32)ArgCount) {
+                PrintError("Missing value after --min-dist");
+                exit(EXIT_FAILURE);
+            }
+            ++index;
+            u32 minDist;
+            if (StringToInt_Check((u08 *)ArgBuffer[index], &minDist))
+            {
+                Min_Map_Distance = minDist;
+            }
+            else
+            {
+                PrintError("Invalid option for min-dist, not a non-negative int: \'%s\'", ArgBuffer[index]);
                 exit(EXIT_FAILURE);
             }
         }
