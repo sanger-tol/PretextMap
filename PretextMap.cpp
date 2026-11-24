@@ -2698,7 +2698,7 @@ MainArgs
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
                               --balance ({max}, vc, vcsqrt, ice, kr)
-                              --juicer {oe, balance}: distance-normalized or balanced raw-count display
+                              --juicer {oe, balance, mcfs}: distance O/E, balanced, or MCFS display
                               --log: log counts with smooth contrast across resolutions)
                               {--highRes|--ultraRes}
 
@@ -2892,9 +2892,13 @@ MainArgs
             {
                 Juicer_Mode = Juicer_Balance;
             }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"mcfs"))
+            {
+                Juicer_Mode = Juicer_MCFS;
+            }
             else
             {
-                PrintError("Invalid option for juicer: \'%s\' (use oe or balance)", ArgBuffer[index]);
+                PrintError("Invalid option for juicer: \'%s\' (use oe, balance or mcfs)", ArgBuffer[index]);
                 exit(EXIT_FAILURE);
             }
         }
@@ -2922,9 +2926,9 @@ MainArgs
         PrintError("--juicer and --log cannot be used together");
         exit(EXIT_FAILURE);
     }
-    if (Juicer_Mode == Juicer_OE && Balance_Option_Set)
+    if ((Juicer_Mode == Juicer_OE || Juicer_Mode == Juicer_MCFS) && Balance_Option_Set)
     {
-        PrintError("--balance cannot be combined with --juicer oe");
+        PrintError("--balance cannot be combined with --juicer oe or --juicer mcfs");
         exit(EXIT_FAILURE);
     }
     if (Juicer_Mode == Juicer_Balance)
@@ -3032,14 +3036,23 @@ MainArgs
             ThreadPoolWait(Thread_Pool);
         }
 
-        if (Juicer_Mode == Juicer_OE)
+        if (Juicer_Mode == Juicer_OE || Juicer_Mode == Juicer_MCFS)
         {
-            PrintStatus("--juicer oe: calculating observed/expected signal per LOD");
+            u08 useMedian = Juicer_Mode == Juicer_MCFS ? 1 : 0;
+            if (useMedian)
+            {
+                PrintStatus("--juicer mcfs: median contact-frequency O/E (MCFS) per LOD");
+            }
+            else
+            {
+                PrintStatus("--juicer oe: calculating observed/expected signal per LOD");
+            }
             juicer_oe_task *oeTasks = PushArray(Working_Set, juicer_oe_task, Number_of_LODs);
             for (u32 level = 0; level < Number_of_LODs; ++level)
             {
                 oeTasks[level].image = (u16 **)Images[level];
                 oeTasks[level].pixels = Pixel_Resolution(Max_Image_Depth - level);
+                oeTasks[level].useMedian = useMedian;
                 ThreadPoolAddTask(Thread_Pool, juicer_observed_expected, (oeTasks + level));
             }
             ThreadPoolWait(Thread_Pool);

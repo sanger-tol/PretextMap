@@ -7,7 +7,8 @@ enum juicer_mode
 {
     Juicer_None = 0,
     Juicer_OE = 1,
-    Juicer_Balance = 2
+    Juicer_Balance = 2,
+    Juicer_MCFS = 3
 };
 
 struct juicer_sum_task
@@ -25,6 +26,7 @@ struct juicer_oe_task
 {
     u16 **image;
     u32 pixels;
+    u08 useMedian; /* 0: mean over all bins (Juicebox-style); 1: MCFS median of non-zeros */
 };
 
 void juicer_find_max_sum(void *in);
