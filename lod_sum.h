@@ -16,19 +16,24 @@ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
 */
 
-#ifndef MAX_NORM_H
-#define MAX_NORM_H
+#ifndef LOD_SUM_H
+#define LOD_SUM_H
 
 #include "Header.h"
 
-struct max_norm_task
+/* Build coarser LODs by 2x2 raw-count sums (coverage-preserving). */
+struct lod_sum_task
 {
-    u16 **finestImage;
+    u16 **sourceImage;
     u16 **image;
-    u32 finestPixels;
-    u32 level;
+    u32 pixels;
+    u32 rowStart;
+    u32 rowEnd;
+    u64 maxSum;
+    f64 scale;
 };
 
-void max_norm(void *in);
+void lod_find_max_sum(void *in);
+void lod_sum_level(void *in);
 
 #endif

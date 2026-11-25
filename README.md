@@ -40,13 +40,11 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --min-dist filters out read pairs on the same contig whose mapping positions differ by less than this many base pairs (default: 0, disabled). Pairs on different contigs are unaffected.<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
-* --balance {max, vc, vcsqrt, ice, kr}: contact balance on PretextMap's own count matrix, before the square-root fold. `max` (default) is the original row-maximum equalisation. `vc` and `vcsqrt` are one-shot coverage weights, `ice` is iterative correction, `kr` is Knight–Ruiz. A bin with no contacts gets weight 0.<br/>
-* --juicer {oe, balance, mcfs}: experimental Juicebox-inspired display (not an exact reproduction) using raw-count block sums at every resolution, uniformly scaled to fit the internal 16-bit range. `oe` displays mean observed/expected by genomic distance, with ratios 0.25–4 mapped to grayscale; `mcfs` uses Median Contact Frequency Scaling adapted for Pretext: occupancy-weighted median of non-zero contacts at each distance, then soft O/E (`count / expected^0.1`) so the near-diagonal stays visible; `balance` applies KR by default, or accepts `--balance {vc, vcsqrt, ice, kr}` to choose the balancing method. Cannot be combined with `--log`, or with `--balance` in `oe`/`mcfs` mode.<br/>
-* --log: log-normalize coarse levels from summed raw counts to reveal global weak signal, while the finest 3 levels use the standard mipmap, balance, square-root fold and histogram contrast processing for clearer local structure. `--balance` applies only to those finest levels.<br/>
+* --norm {kl, vcsqrt}: contact normalisation before the square-root fold. `kl` (default) is the original row-maximum equalisation on weighted-median mipmaps. `vcsqrt` builds coarser levels by raw-count 2×2 sums, then applies coverage weights `1/sqrt(coverage)` (bins with no contacts get weight 0).<br/>
 
 example:<br/>
 ```sh
-> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend --mapq 10
+> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend --mapq 10 --norm vcsqrt
 ```
 
 Ultra resolution example (for large Hi-C datasets):<br/>

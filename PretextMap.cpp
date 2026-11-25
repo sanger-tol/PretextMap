@@ -19,7 +19,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-author: Ed Harry, Chenxi Zhou, Ying Sims
+author: Ed Harry, Chenxi Zhou, Yumi Sims
 */
 
 #define String_(x) #x
@@ -27,8 +27,8 @@ author: Ed Harry, Chenxi Zhou, Ying Sims
 #define PretextMap_Version "PretextMap Version " String(PV)
 
 #include "Header.h"
-#include "max_norm.h"
-#include "juicer.h"
+#include "norm.h"
+#include "lod_sum.h"
 #include <math.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -402,33 +402,6 @@ Min_Map_Distance = 0;
 global_variable
 u32
 Max_Image_Depth = 15;
-
-/* Contact balance, applied to each LOD's count matrix before the sqrt fold.
-   RowMax is the original PretextMap loop and stays the default. */
-#define Balance_RowMax 0
-#define Balance_VC 1
-#define Balance_VCSqrt 2
-#define Balance_ICE 3
-#define Balance_KR 4
-
-global_variable
-u32
-Balance_Mode = Balance_RowMax;
-
-/* Use log mapping for coarse raw-count levels when --log is enabled. */
-global_variable
-u08
-Log_Signal = 0;
-
-global_variable
-juicer_mode
-Juicer_Mode = Juicer_None;
-
-global_variable
-u08
-Balance_Option_Set = 0;
-
-#define Log_Fine_Detail_LODs 3
 
 #define Min_Image_Depth 10
 // LOD = Level of Detail
@@ -1838,375 +1811,13 @@ CreateMipMap(void *in)
 
 #define Contrast_Histogram_Cutoff_Slope 3
 
-/* image[row][distance] stores the contact between row and row+distance.
-   The matrix is symmetric, so a matvec adds every off-diagonal count to both bins. */
-global_function
-void
-SymvUpper(u16 **image, u32 n, f64 *right, f64 *out)
-{
-    memset(out, 0, (size_t)n * sizeof(f64));
-
-    for (u32 row = 0; row < n; ++row)
-    {
-        u16 *cells = image[row];
-        f64 left = right[row];
-        u32 width = n - row;
-
-        for (u32 dist = 0; dist < width; ++dist)
-        {
-            f64 count = (f64)cells[dist];
-            u32 col = row + dist;
-
-            out[row] += count * right[col];
-            if (dist) out[col] += count * left;
-        }
-    }
-}
-
-global_function
-f64
-BalancedSpread(u32 n, f64 *weight, f64 *ax)
-{
-    f64 sum = 0.0;
-    u32 nnz = 0;
-
-    for (u32 bin = 0; bin < n; ++bin)
-    {
-        if (weight[bin] == 0.0) continue;
-        f64 row = weight[bin] * ax[bin];
-        if (row > 0.0)
-        {
-            sum += row;
-            ++nnz;
-        }
-    }
-
-    if (!nnz) return 0.0;
-
-    f64 mean = sum / (f64)nnz;
-    f64 spread = 0.0;
-    for (u32 bin = 0; bin < n; ++bin)
-    {
-        if (weight[bin] == 0.0) continue;
-        f64 row = weight[bin] * ax[bin];
-        if (row <= 0.0) continue;
-        f64 rel = fabs(row / mean - 1.0);
-        if (rel > spread) spread = rel;
-    }
-    return spread;
-}
-
-/* Scale count * w[i] * w[j] so the brightest stored cell lands on 32768,
-   which is where the original row-max loop leaves the image before the sqrt fold. */
-global_function
-void
-ApplyBalanceWeights(u16 **image, u32 n, f64 *weight)
-{
-    f64 peak = 0.0;
-
-    for (u32 row = 0; row < n; ++row)
-    {
-        u32 width = n - row;
-        for (u32 dist = 0; dist < width; ++dist)
-        {
-            f64 balanced = (f64)image[row][dist] * weight[row] * weight[row + dist];
-            if (balanced > peak) peak = balanced;
-        }
-    }
-
-    if (peak <= 0.0) return;
-
-    f64 scale = (f64)(1 << 15) / peak;
-    for (u32 row = 0; row < n; ++row)
-    {
-        u32 width = n - row;
-        for (u32 dist = 0; dist < width; ++dist)
-        {
-            f64 balanced = (f64)image[row][dist] * weight[row] * weight[row + dist] * scale;
-            if (balanced < 0.0) balanced = 0.0;
-            if (balanced > 65535.0) balanced = 65535.0;
-            image[row][dist] = (u16)(balanced + 0.5);
-        }
-    }
-}
-
-global_function
-void
-BalanceCoverage(u16 **image, u32 n, f64 *weight, f64 *ones, f64 *coverage, u08 squareRoot)
-{
-    for (u32 bin = 0; bin < n; ++bin) ones[bin] = 1.0;
-    SymvUpper(image, n, ones, coverage);
-
-    for (u32 bin = 0; bin < n; ++bin)
-    {
-        if (coverage[bin] > 0.0)
-        {
-            weight[bin] = squareRoot ? 1.0 / sqrt(coverage[bin]) : 1.0 / coverage[bin];
-        }
-        else
-        {
-            weight[bin] = 0.0;
-        }
-    }
-}
-
-/* Imakaev et al. 2012. Weights stay outside the matrix: each pass is one matvec. */
-global_function
-void
-BalanceICE(u16 **image, u32 n, f64 *weight, f64 *margin)
-{
-    for (u32 bin = 0; bin < n; ++bin) weight[bin] = 1.0;
-
-    for (u32 iter = 0; iter < 200; ++iter)
-    {
-        SymvUpper(image, n, weight, margin);
-
-        f64 sum = 0.0;
-        u32 nnz = 0;
-        for (u32 bin = 0; bin < n; ++bin)
-        {
-            f64 row = weight[bin] * margin[bin];
-            margin[bin] = row;
-            if (row > 0.0)
-            {
-                sum += row;
-                ++nnz;
-            }
-        }
-        if (!nnz) return;
-
-        f64 mean = sum / (f64)nnz;
-        f64 spread = 0.0;
-        for (u32 bin = 0; bin < n; ++bin)
-        {
-            f64 row = margin[bin];
-            if (row > 0.0)
-            {
-                f64 rel = fabs(row / mean - 1.0);
-                if (rel > spread) spread = rel;
-                weight[bin] *= sqrt(mean / row);
-            }
-            else
-            {
-                weight[bin] = 0.0;
-            }
-        }
-
-        if (spread < 1e-4) return;
-    }
-}
-
-/* Knight and Ruiz, IMA J. Numer. Anal. 2013, inner-outer iteration.
-   y is a multiplicative step, restarted from 1. x <- x .* y, and the step is
-   kept inside [0.1, 3] so one pass cannot wipe a bin out. */
-global_function
-void
-BalanceKR(u16 **image, u32 n, f64 *weight, f64 *ax, f64 *residual, f64 *precond, f64 *direction, f64 *jdir, f64 *scratch, f64 *delta, f64 *trial)
-{
-    f64 tol = 1e-6;
-    f64 lower = 0.1;
-    f64 upper = 3.0;
-    f64 shrink = 0.9;
-    f64 etaMax = 0.1;
-    f64 eta = etaMax;
-    f64 stopTol = tol * 0.5;
-    f64 residualTarget = tol * tol;
-
-    for (u32 bin = 0; bin < n; ++bin) weight[bin] = 1.0;
-    SymvUpper(image, n, weight, ax);
-    for (u32 bin = 0; bin < n; ++bin)
-    {
-        if (ax[bin] <= 0.0) weight[bin] = 0.0;
-    }
-
-    SymvUpper(image, n, weight, ax);
-    f64 rho = 0.0;
-    for (u32 bin = 0; bin < n; ++bin)
-    {
-        trial[bin] = weight[bin] * ax[bin];
-        residual[bin] = weight[bin] > 0.0 ? 1.0 - trial[bin] : 0.0;
-        rho += residual[bin] * residual[bin];
-    }
-
-    f64 rout = rho;
-    f64 rold = rout;
-    for (u32 outer = 0; outer < 60 && rout > residualTarget; ++outer)
-    {
-        for (u32 bin = 0; bin < n; ++bin) delta[bin] = 1.0;
-
-        f64 innerTol = eta * eta * rout;
-        if (innerTol < residualTarget) innerTol = residualTarget;
-
-        f64 rhoKm1 = rho;
-        f64 rhoKm2 = rho;
-        for (u32 inner = 0; inner < 40 && rhoKm1 > innerTol; ++inner)
-        {
-            if (inner == 0)
-            {
-                rhoKm1 = 0.0;
-                for (u32 bin = 0; bin < n; ++bin)
-                {
-                    precond[bin] = trial[bin] > 0.0 ? residual[bin] / trial[bin] : 0.0;
-                    direction[bin] = precond[bin];
-                    rhoKm1 += residual[bin] * precond[bin];
-                }
-            }
-            else
-            {
-                f64 beta = rhoKm2 != 0.0 ? rhoKm1 / rhoKm2 : 0.0;
-                for (u32 bin = 0; bin < n; ++bin)
-                {
-                    direction[bin] = precond[bin] + beta * direction[bin];
-                }
-            }
-
-            for (u32 bin = 0; bin < n; ++bin) scratch[bin] = weight[bin] * direction[bin];
-            SymvUpper(image, n, scratch, ax);
-
-            f64 denom = 0.0;
-            for (u32 bin = 0; bin < n; ++bin)
-            {
-                jdir[bin] = weight[bin] * ax[bin] + trial[bin] * direction[bin];
-                denom += direction[bin] * jdir[bin];
-            }
-            if (denom <= 1e-30) break;
-
-            f64 alpha = rhoKm1 / denom;
-            f64 yMin = 1e300;
-            f64 yMax = -1e300;
-            for (u32 bin = 0; bin < n; ++bin)
-            {
-                if (weight[bin] == 0.0) continue;
-                f64 yNew = delta[bin] + alpha * direction[bin];
-                if (yNew < yMin) yMin = yNew;
-                if (yNew > yMax) yMax = yNew;
-            }
-
-            if (yMin <= lower)
-            {
-                f64 gamma = 1e300;
-                for (u32 bin = 0; bin < n; ++bin)
-                {
-                    if (weight[bin] == 0.0 || direction[bin] >= 0.0) continue;
-                    f64 step = (lower - delta[bin]) / direction[bin];
-                    if (step < gamma) gamma = step;
-                }
-                if (gamma < 0.0 || gamma > 1e299) break;
-                for (u32 bin = 0; bin < n; ++bin) delta[bin] += gamma * direction[bin];
-                break;
-            }
-
-            if (yMax >= upper)
-            {
-                f64 gamma = 1e300;
-                for (u32 bin = 0; bin < n; ++bin)
-                {
-                    if (weight[bin] == 0.0 || direction[bin] <= 0.0) continue;
-                    f64 yNew = delta[bin] + alpha * direction[bin];
-                    if (yNew <= upper) continue;
-                    f64 step = (upper - delta[bin]) / direction[bin];
-                    if (step < gamma) gamma = step;
-                }
-                if (gamma < 0.0 || gamma > 1e299) break;
-                for (u32 bin = 0; bin < n; ++bin) delta[bin] += gamma * direction[bin];
-                break;
-            }
-
-            for (u32 bin = 0; bin < n; ++bin) delta[bin] += alpha * direction[bin];
-            rhoKm2 = rhoKm1;
-            rhoKm1 = 0.0;
-            for (u32 bin = 0; bin < n; ++bin)
-            {
-                residual[bin] -= alpha * jdir[bin];
-                precond[bin] = trial[bin] > 0.0 ? residual[bin] / trial[bin] : 0.0;
-                rhoKm1 += residual[bin] * precond[bin];
-            }
-        }
-
-        for (u32 bin = 0; bin < n; ++bin) weight[bin] *= delta[bin];
-
-        SymvUpper(image, n, weight, ax);
-        rho = 0.0;
-        for (u32 bin = 0; bin < n; ++bin)
-        {
-            trial[bin] = weight[bin] * ax[bin];
-            residual[bin] = weight[bin] > 0.0 ? 1.0 - trial[bin] : 0.0;
-            rho += residual[bin] * residual[bin];
-        }
-        rout = rho;
-
-        f64 ratio = rold > 0.0 ? rout / rold : 0.0;
-        rold = rout;
-        f64 residualNorm = sqrt(rout);
-        f64 etaPrev = eta;
-        eta = shrink * ratio;
-        if (shrink * etaPrev * etaPrev > 0.1)
-        {
-            f64 floorEta = shrink * etaPrev * etaPrev;
-            if (floorEta > eta) eta = floorEta;
-        }
-        if (eta > etaMax) eta = etaMax;
-        if (residualNorm > 0.0)
-        {
-            f64 etaFloor = stopTol / residualNorm;
-            if (eta < etaFloor) eta = etaFloor;
-        }
-    }
-}
-
-global_function
-void
-BalanceContacts(u16 **image, u32 n)
-{
-    f64 *weight = 0;
-    f64 *scratch = 0;
-    u32 vectors = Balance_Mode == Balance_KR ? 9 : 3;
-
-    weight = (f64 *)malloc((size_t)vectors * (size_t)n * sizeof(f64));
-    if (!weight)
-    {
-        PrintError("Out of memory while balancing contacts");
-        exit(EXIT_FAILURE);
-    }
-    scratch = weight + n;
-
-    if (Balance_Mode == Balance_VC)
-    {
-        BalanceCoverage(image, n, weight, scratch, scratch + n, 0);
-    }
-    else if (Balance_Mode == Balance_VCSqrt)
-    {
-        BalanceCoverage(image, n, weight, scratch, scratch + n, 1);
-    }
-    else if (Balance_Mode == Balance_ICE)
-    {
-        BalanceICE(image, n, weight, scratch);
-    }
-    else if (Balance_Mode == Balance_KR)
-    {
-        BalanceKR(image, n, weight, scratch, scratch + n, scratch + 2 * n, scratch + 3 * n, scratch + 4 * n, scratch + 5 * n, scratch + 6 * n, scratch + 7 * n);
-    }
-
-    ApplyBalanceWeights(image, n, weight);
-    free(weight);
-}
-
-global_function
-const char *
-BalanceModeName()
-{
-    if (Balance_Mode == Balance_VC) return "VC";
-    if (Balance_Mode == Balance_VCSqrt) return "VC_SQRT";
-    if (Balance_Mode == Balance_ICE) return "ICE";
-    if (Balance_Mode == Balance_KR) return "KR";
-    return "row-max";
-}
-
 global_function
 void
 ContrastEqualisation(void *in)
 {
-    u32 lodIndex = *((u32 *)in);
+    contrast_task *task = (contrast_task *)in;
+    u32 lodIndex = task->lodIndex;
+    u32 normMode = task->normMode;
     u16 **image = (u16 **)Images[lodIndex];
     u32 nPixels = Pixel_Resolution(Max_Image_Depth - lodIndex);
     u32 *hist = Image_Histograms[lodIndex];
@@ -2214,69 +1825,9 @@ ContrastEqualisation(void *in)
 
     f32 *scalars = Image_Norm_Scalars[lodIndex];
 
+    ApplyNorm(image, nPixels, scalars, normMode);
+
     u16 max;
-    f32 maxNorm;
-    u32 klIter = 0;
-
-#define KL_Norm_Range (1 << 15)
-#define KL_Norm_Tol (1e-4)
-#define KL_Max_Iter 128
-    if (Balance_Mode == Balance_RowMax)
-    {
-    do
-    {
-        ForLoop(nPixels)
-        {
-            max = 0;
-
-            ForLoop2(nPixels)
-            {
-                u32 idMin = Min(index, index2);
-                u32 idMax = Max(index, index2);
-                u16 pixel = image[idMin][idMax - idMin];
-
-                max = Max(max, pixel);
-            }
-
-            // A value in the `scalars` array is assigned for each row in the
-            // image, which is the maximum value seen on that row, and will
-            // range between 1.0 (when max == 0) and < 256.0
-            scalars[index] = max ? 1.0f / sqrtf((f32)max) : 1.0f; // TODO invsqrt intrinsic?
-        }
-
-        ForLoop(nPixels)
-        {
-            ForLoop2(nPixels - index)
-            {
-                image[index][index2] = (u16)((f32)image[index][index2] * scalars[index] * scalars[index + index2] * (f32)KL_Norm_Range);
-            }
-        }
-
-        maxNorm = 0.0f;
-        ForLoop(nPixels)
-        {
-            max = 0;
-
-            ForLoop2(nPixels)
-            {
-                u32 idMin = Min(index, index2);
-                u32 idMax = Max(index, index2);
-                u16 pixel = image[idMin][idMax - idMin];
-
-                max = Max(max, pixel);
-            }
-
-            f32 tmp = max ? ((f32)KL_Norm_Range - (f32)max) / (f32)KL_Norm_Range : 0.0f;
-            tmp = tmp > 0.0f ? tmp : -tmp;
-            maxNorm = Max(maxNorm, tmp);
-        }
-    } while (maxNorm > (f32)KL_Norm_Tol && klIter++ < KL_Max_Iter);
-    }
-    else
-    {
-        BalanceContacts(image, nPixels);
-    }
-
     ForLoop(nPixels)
     {
         ForLoop2(nPixels - index)
@@ -2697,9 +2248,7 @@ MainArgs
                               --min-dist {0}: minimum same-contig mapping distance in bp
                               --filterInclude "seq_ [, seq_]*"
                               --filterExclude "seq_ [, seq_]*"
-                              --balance ({max}, vc, vcsqrt, ice, kr)
-                              --juicer {oe, balance, mcfs}: distance O/E, balanced, or MCFS display
-                              --log: log counts with smooth contrast across resolutions)
+                              --norm ({kl}, vcsqrt)
                               {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
@@ -2843,68 +2392,26 @@ MainArgs
             ++index;
             filterExcludeString = ArgBuffer[index];
         }
-        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--balance"))
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--norm"))
         {
             if (index + 1 >= (u32)ArgCount) {
-                PrintError("Missing value after --balance");
+                PrintError("Missing value after --norm");
                 exit(EXIT_FAILURE);
             }
             ++index;
-            if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"max"))
+            if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"kl"))
             {
-                Balance_Mode = Balance_RowMax;
-            }
-            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"vc"))
-            {
-                Balance_Mode = Balance_VC;
+                Norm_Mode = Norm_KL;
             }
             else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"vcsqrt"))
             {
-                Balance_Mode = Balance_VCSqrt;
-            }
-            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"ice"))
-            {
-                Balance_Mode = Balance_ICE;
-            }
-            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"kr"))
-            {
-                Balance_Mode = Balance_KR;
+                Norm_Mode = Norm_VCSqrt;
             }
             else
             {
-                PrintError("Invalid option for balance: \'%s\' (use max, vc, vcsqrt, ice or kr)", ArgBuffer[index]);
+                PrintError("Invalid option for --norm: '%s' (use kl or vcsqrt)", ArgBuffer[index]);
                 exit(EXIT_FAILURE);
             }
-            Balance_Option_Set = 1;
-        }
-        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--juicer"))
-        {
-            if (index + 1 >= (u32)ArgCount) {
-                PrintError("Missing value after --juicer");
-                exit(EXIT_FAILURE);
-            }
-            ++index;
-            if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"oe"))
-            {
-                Juicer_Mode = Juicer_OE;
-            }
-            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"balance"))
-            {
-                Juicer_Mode = Juicer_Balance;
-            }
-            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"mcfs"))
-            {
-                Juicer_Mode = Juicer_MCFS;
-            }
-            else
-            {
-                PrintError("Invalid option for juicer: \'%s\' (use oe, balance or mcfs)", ArgBuffer[index]);
-                exit(EXIT_FAILURE);
-            }
-        }
-        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--log"))
-        {
-            Log_Signal = 1;
         }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--highRes"))
         {
@@ -2921,34 +2428,13 @@ MainArgs
         }
     }
 
-    if (Juicer_Mode != Juicer_None && Log_Signal)
-    {
-        PrintError("--juicer and --log cannot be used together");
-        exit(EXIT_FAILURE);
-    }
-    if ((Juicer_Mode == Juicer_OE || Juicer_Mode == Juicer_MCFS) && Balance_Option_Set)
-    {
-        PrintError("--balance cannot be combined with --juicer oe or --juicer mcfs");
-        exit(EXIT_FAILURE);
-    }
-    if (Juicer_Mode == Juicer_Balance)
-    {
-        if (!Balance_Option_Set)
-        {
-            Balance_Mode = Balance_KR;
-        }
-        else if (Balance_Mode == Balance_RowMax)
-        {
-            PrintError("--juicer balance requires --balance vc, vcsqrt, ice or kr; max is a display equalisation mode");
-            exit(EXIT_FAILURE);
-        }
-    }
-
     if (!outputNameGiven)
     {
         PrintError("Please provide an output file name (-o output.pretext)");
         exit(EXIT_FAILURE);
     }
+
+    PrintStatus("Normalisation mode: %s", NormModeName());
 
     PrintStatus("Initializing working set mutex");
     InitialiseMutex(Working_Set_rwMutex);
@@ -3003,10 +2489,12 @@ MainArgs
         mipMapLevels[index] = index;
     }
 
-    if (Juicer_Mode != Juicer_None)
+    if (Norm_Mode == Norm_VCSqrt)
     {
+        /* Raw-count 2x2 sums so coverage stays additive for VCSqrt. */
         const u32 sumWorkerCount = 3;
-        juicer_sum_task *sumTasks = PushArray(Working_Set, juicer_sum_task, sumWorkerCount);
+        lod_sum_task *sumTasks = PushArray(Working_Set, lod_sum_task, sumWorkerCount);
+        PrintStatus("Building raw-count sum levels...");
         for (u32 level = 1; level < Number_of_LODs; ++level)
         {
             u32 pixels = Pixel_Resolution(Max_Image_Depth - level);
@@ -3017,7 +2505,7 @@ MainArgs
                 sumTasks[worker].pixels = pixels;
                 sumTasks[worker].rowStart = pixels * worker / sumWorkerCount;
                 sumTasks[worker].rowEnd = pixels * (worker + 1) / sumWorkerCount;
-                ThreadPoolAddTask(Thread_Pool, juicer_find_max_sum, &sumTasks[worker]);
+                ThreadPoolAddTask(Thread_Pool, lod_find_max_sum, &sumTasks[worker]);
             }
             ThreadPoolWait(Thread_Pool);
 
@@ -3031,89 +2519,10 @@ MainArgs
             for (u32 worker = 0; worker < sumWorkerCount; ++worker)
             {
                 sumTasks[worker].scale = scale;
-                ThreadPoolAddTask(Thread_Pool, juicer_sum_level, &sumTasks[worker]);
+                ThreadPoolAddTask(Thread_Pool, lod_sum_level, &sumTasks[worker]);
             }
             ThreadPoolWait(Thread_Pool);
         }
-
-        if (Juicer_Mode == Juicer_OE || Juicer_Mode == Juicer_MCFS)
-        {
-            u08 useMedian = Juicer_Mode == Juicer_MCFS ? 1 : 0;
-            if (useMedian)
-            {
-                PrintStatus("--juicer mcfs: median contact-frequency O/E (MCFS) per LOD");
-            }
-            else
-            {
-                PrintStatus("--juicer oe: calculating observed/expected signal per LOD");
-            }
-            juicer_oe_task *oeTasks = PushArray(Working_Set, juicer_oe_task, Number_of_LODs);
-            for (u32 level = 0; level < Number_of_LODs; ++level)
-            {
-                oeTasks[level].image = (u16 **)Images[level];
-                oeTasks[level].pixels = Pixel_Resolution(Max_Image_Depth - level);
-                oeTasks[level].useMedian = useMedian;
-                ThreadPoolAddTask(Thread_Pool, juicer_observed_expected, (oeTasks + level));
-            }
-            ThreadPoolWait(Thread_Pool);
-        }
-        else
-        {
-            PrintStatus("--juicer balance: applying %s balance to raw-count sum levels", BalanceModeName());
-            ForLoop(Number_of_LODs)
-            {
-                ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
-            }
-            ThreadPoolWait(Thread_Pool);
-        }
-    }
-    else if (Log_Signal)
-    {
-        u32 finestPixels = Pixel_Resolution(Max_Image_Depth);
-        u32 fineLodCount = Number_of_LODs < Log_Fine_Detail_LODs
-            ? Number_of_LODs
-            : Log_Fine_Detail_LODs;
-
-        PrintStatus("--log: log-normalizing coarse levels and using standard contrast for the finest %u levels", fineLodCount);
-        if (Balance_Mode != Balance_RowMax)
-        {
-            PrintStatus("--balance applies only to the finest levels; coarse log levels use raw counts");
-        }
-
-        max_norm_task *logTasks = PushArray(Working_Set, max_norm_task, Number_of_LODs);
-        for (u32 level = fineLodCount; level < Number_of_LODs; ++level)
-        {
-            logTasks[level].finestImage = (u16 **)Images[0];
-            logTasks[level].image = (u16 **)Images[level];
-            logTasks[level].finestPixels = finestPixels;
-            logTasks[level].level = level;
-            ThreadPoolAddTask(Thread_Pool, max_norm, (logTasks + level));
-        }
-        ThreadPoolWait(Thread_Pool);
-
-        if (fineLodCount > 1)
-        {
-            MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, fineLodCount - 1);
-            for (u32 level = 1; level < fineLodCount; ++level)
-            {
-                MipMap_Weighted_Median_Kernels[level - 1] = PushStruct(Working_Set, weighted_median_kernel);
-                MipMap_Weighted_Median_Kernels[level - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * level));
-                MipMap_Weighted_Median_Kernels[level - 1]->weights = PushArray(Working_Set, f32*, 1 << (level - 1));
-                for (u32 row = 0; row < (1u << (level - 1)); ++row)
-                {
-                    MipMap_Weighted_Median_Kernels[level - 1]->weights[row] =
-                        PushArray(Working_Set, f32, (1u << (level - 1)) - row);
-                }
-                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + level));
-            }
-        }
-
-        ThreadPoolWait(Thread_Pool);
-        for (u32 level = 0; level < fineLodCount; ++level)
-        {
-            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + level));
-        }
-        ThreadPoolWait(Thread_Pool);
     }
     else
     {
@@ -3136,13 +2545,17 @@ MainArgs
 
         PrintStatus("Creating MipMaps...");
         ThreadPoolWait(Thread_Pool);
-        ForLoop(Number_of_LODs)
-        {
-            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index));
-        }
-        PrintStatus("Equalising contrast (%s)...", BalanceModeName());
-        ThreadPoolWait(Thread_Pool);
     }
+
+    contrast_task *contrastTasks = PushArray(Working_Set, contrast_task, Number_of_LODs);
+    ForLoop(Number_of_LODs)
+    {
+        contrastTasks[index].lodIndex = mipMapLevels[index];
+        contrastTasks[index].normMode = Norm_Mode;
+        ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(contrastTasks + index));
+    }
+    PrintStatus("Equalising contrast (%s)...", NormModeName());
+    ThreadPoolWait(Thread_Pool);
     
     CreateDXTTextures();
     PrintStatus("Compressing textures...");
