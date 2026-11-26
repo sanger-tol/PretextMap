@@ -36,15 +36,31 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * -o specifies an output file (required)<br/>
 * --sortby sorts contigs by length, name or nosort (default: length)<br/>
 * --sortorder ascend or descend (default: descend, no effect if sortby = nosort)<br/>
-* --mapq sets a minimum mapping quality filter (default: 10)<br/>
+* --mapq sets a minimum mapping quality filter (default: 0)<br/>
 * --min-dist filters out read pairs on the same contig whose mapping positions differ by less than this many base pairs (default: 0, disabled). Pairs on different contigs are unaffected.<br/>
+* --mapqLayers comma-separated MAPQ layer thresholds (default: 0,10). Each threshold produces a contact-map layer including read pairs with MAPQ ≥ that value<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
 * --norm {kl, vcsqrt}: contact normalisation before the square-root fold. `kl` (default) is the original row-maximum equalisation on weighted-median mipmaps. `vcsqrt` builds coarser levels by raw-count 2×2 sums, then applies coverage weights `1/sqrt(coverage)` (bins with no contacts get weight 0).<br/>
 
-example:<br/>
+By default PretextMap writes two MAPQ layers (0 and 10). No `--mapq` or `--mapqLayers` flags are needed for that case:<br/>
 ```sh
-> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend --mapq 10 --norm vcsqrt
+> samtools view -h file.bam | PretextMap -o map.pretext
+```
+
+Custom sorting example:<br/>
+```sh
+> samtools view -h file.bam | PretextMap -o map.pretext --sortby length --sortorder descend
+```
+
+Custom MAPQ layers example:<br/>
+```sh
+> samtools view -h file.bam | PretextMap -o map.pretext --mapqLayers "0,10,20,30"
+```
+
+VCSqrt normalisation example:<br/>
+```sh
+> samtools view -h file.bam | PretextMap -o map.pretext --norm vcsqrt
 ```
 
 Ultra resolution example (for large Hi-C datasets):<br/>
@@ -67,7 +83,7 @@ Note: also filtering with samtools view as in the above example (... seq_1 seq_2
 ## New option, version 0.1.9:<br/>
 * --highRes: high resolution output, only supported by PretextView >=0.2.5
 
-## New option, version 0.3.0:<br/>
+## New option, version 0.2.4:<br/>
 * --ultraRes: ultra resolution output for maximum detail in contact maps. Requires 40GB RAM (vs 16GB for --highRes, 3GB default). Use for large or high-coverage Hi-C datasets where fine-scale structure is important.
 
 * Long Hi-C data support: PretextMap supports long Hi-C data from mapped BAM files. The line buffer has been increased to 32KB to handle long SAM lines (e.g. from samtools view -h file.bam) produced by long-read Hi-C technologies (e.g. PacBio, Nanopore) where alignments can span many kilobases, without buffer overflow.
