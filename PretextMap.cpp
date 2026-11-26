@@ -19,7 +19,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-author: Ed Harry, Chenxi Zhou, Ying Sims
+author: Ed Harry, Chenxi Zhou, Yumi Sims
 */
 
 #define String_(x) #x
@@ -27,6 +27,8 @@ author: Ed Harry, Chenxi Zhou, Ying Sims
 #define PretextMap_Version "PretextMap Version " String(PV)
 
 #include "Header.h"
+#include "norm.h"
+#include "lod_sum.h"
 #include <math.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -422,6 +424,10 @@ Current_Output_Layer = 0;
 
 global_variable
 u32
+Min_Map_Distance = 0;
+
+global_variable
+u32
 Max_Image_Depth = 15;
 
 #define Min_Image_Depth 10
@@ -664,6 +670,7 @@ ProcessBodyLine(void *in)
 
                 if (cont)
                 {
+                    contig *cont1 = cont;
                     u64 cummLen1 = cont->previousCumulativeLength;
                     u64 read1 = cummLen1 + relPos1;
 
@@ -683,7 +690,8 @@ ProcessBodyLine(void *in)
                         }
                     }
 
-                    if (cont)
+                    u64 distance = relPos1 > relPos2 ? relPos1 - relPos2 : relPos2 - relPos1;
+                    if (cont && (cont != cont1 || distance >= Min_Map_Distance))
                     {
                         u64 read2 = cummLen2 + relPos2;
 
@@ -1877,13 +1885,15 @@ CreateMipMap(void *in)
     }
 }
 
-#define Contrast_Histogram_Cutoff_Slope 3 
+#define Contrast_Histogram_Cutoff_Slope 3
 
 global_function
 void
 ContrastEqualisation(void *in)
 {
-    u32 lodIndex = *((u32 *)in);
+    contrast_task *task = (contrast_task *)in;
+    u32 lodIndex = task->lodIndex;
+    u32 normMode = task->normMode;
     u16 **image = (u16 **)Images[lodIndex];
     u32 nPixels = Pixel_Resolution(Max_Image_Depth - lodIndex);
     u32 *hist = Image_Histograms[lodIndex];
@@ -1891,62 +1901,9 @@ ContrastEqualisation(void *in)
 
     f32 *scalars = Image_Norm_Scalars[lodIndex];
 
+    ApplyNorm(image, nPixels, scalars, normMode);
+
     u16 max;
-    f32 maxNorm;
-    u32 klIter = 0;
-
-#define KL_Norm_Range (1 << 15)
-#define KL_Norm_Tol (1e-4)
-#define KL_Max_Iter 128
-    do
-    {
-        ForLoop(nPixels)
-        {
-            max = 0;
-
-            ForLoop2(nPixels)
-            {
-                u32 idMin = Min(index, index2);
-                u32 idMax = Max(index, index2);
-                u16 pixel = image[idMin][idMax - idMin];
-
-                max = Max(max, pixel);
-            }
-
-            // A value in the `scalars` array is assigned for each row in the
-            // image, which is the maximum value seen on that row, and will
-            // range between 1.0 (when max == 0) and < 256.0
-            scalars[index] = max ? 1.0f / sqrtf((f32)max) : 1.0f; // TODO invsqrt intrinsic?
-        }
-
-        ForLoop(nPixels)
-        {
-            ForLoop2(nPixels - index)
-            {
-                image[index][index2] = (u16)((f32)image[index][index2] * scalars[index] * scalars[index + index2] * (f32)KL_Norm_Range);
-            }
-        }
-
-        maxNorm = 0.0f;
-        ForLoop(nPixels)
-        {
-            max = 0;
-
-            ForLoop2(nPixels)
-            {
-                u32 idMin = Min(index, index2);
-                u32 idMax = Max(index, index2);
-                u16 pixel = image[idMin][idMax - idMin];
-
-                max = Max(max, pixel);
-            }
-
-            f32 tmp = max ? ((f32)KL_Norm_Range - (f32)max) / (f32)KL_Norm_Range : 0.0f;
-            tmp = tmp > 0.0f ? tmp : -tmp;
-            maxNorm = Max(maxNorm, tmp);
-        }
-    } while (maxNorm > (f32)KL_Norm_Tol && klIter++ < KL_Max_Iter);
-
     ForLoop(nPixels)
     {
         ForLoop2(nPixels - index)
@@ -2497,8 +2454,10 @@ MainArgs
                               --sortorder ({descend}, ascend)
                               --mapq {0}
                               --mapqLayers {"0,10"}
+                              --min-dist {0}: minimum same-contig mapping distance in bp
                               --filterInclude "seq_ [, seq_]*"
-                              --filterExclude "seq_ [, seq_]*")
+                              --filterExclude "seq_ [, seq_]*"
+                              --norm ({kl}, vcsqrt)
                               {--highRes|--ultraRes}
 
   If no input file is specified, input will be read from stdin.)help");
@@ -2609,6 +2568,24 @@ MainArgs
                 exit(EXIT_FAILURE);
             }
         }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--min-dist"))
+        {
+            if (index + 1 >= (u32)ArgCount) {
+                PrintError("Missing value after --min-dist");
+                exit(EXIT_FAILURE);
+            }
+            ++index;
+            u32 minDist;
+            if (StringToInt_Check((u08 *)ArgBuffer[index], &minDist))
+            {
+                Min_Map_Distance = minDist;
+            }
+            else
+            {
+                PrintError("Invalid option for min-dist, not a non-negative int: \'%s\'", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
+            }
+        }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--mapqLayers"))
         {
             if (index + 1 >= (u32)ArgCount) {
@@ -2639,6 +2616,27 @@ MainArgs
             }
             ++index;
             filterExcludeString = ArgBuffer[index];
+        }
+        else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--norm"))
+        {
+            if (index + 1 >= (u32)ArgCount) {
+                PrintError("Missing value after --norm");
+                exit(EXIT_FAILURE);
+            }
+            ++index;
+            if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"kl"))
+            {
+                Norm_Mode = Norm_KL;
+            }
+            else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"vcsqrt"))
+            {
+                Norm_Mode = Norm_VCSqrt;
+            }
+            else
+            {
+                PrintError("Invalid option for --norm: '%s' (use kl or vcsqrt)", ArgBuffer[index]);
+                exit(EXIT_FAILURE);
+            }
         }
         else if (AreNullTerminatedStringsEqual((u08 *)ArgBuffer[index], (u08 *)"--highRes"))
         {
@@ -2677,6 +2675,8 @@ MainArgs
         PrintError("The lowest --mapqLayers threshold (%d) is below the --mapq prefilter (%d)", MapQ_Layer_Thresholds[0], Min_Map_Quality);
         exit(EXIT_FAILURE);
     }
+
+    PrintStatus("Normalisation mode: %s", NormModeName());
 
     PrintStatus("Initializing working set mutex");
     InitialiseMutex(Working_Set_rwMutex);
@@ -2725,23 +2725,37 @@ MainArgs
     printf("\n");
     if (Global_Error_Flag) exit(EXIT_FAILURE);
 
-    MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, Number_of_LODs - 1);
     u32 mipMapLevels[Number_of_LODs];
     ForLoop(Number_of_LODs)
     {
         mipMapLevels[index] = index;
-        
-        if (index)
+    }
+
+    const u32 sumWorkerCount = 3;
+    lod_sum_task *sumTasks = 0;
+    if (Norm_Mode == Norm_VCSqrt)
+    {
+        sumTasks = PushArray(Working_Set, lod_sum_task, sumWorkerCount);
+    }
+    else
+    {
+        MipMap_Weighted_Median_Kernels = PushArray(Working_Set, weighted_median_kernel *, Number_of_LODs - 1);
+        ForLoop(Number_of_LODs)
         {
-            MipMap_Weighted_Median_Kernels[index - 1] = PushStruct(Working_Set, weighted_median_kernel);
-            MipMap_Weighted_Median_Kernels[index - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * index));
-            MipMap_Weighted_Median_Kernels[index - 1]->weights = PushArray(Working_Set, f32*, 1 << (index - 1));
-            ForLoop2(1 << (index - 1))
+            if (index)
             {
-                MipMap_Weighted_Median_Kernels[index - 1]->weights[index2] = PushArray(Working_Set, f32, (1 << (index - 1)) - index2);
+                MipMap_Weighted_Median_Kernels[index - 1] = PushStruct(Working_Set, weighted_median_kernel);
+                MipMap_Weighted_Median_Kernels[index - 1]->heap = InitiateBinaryHeap(&Working_Set, 1 << (2 * index));
+                MipMap_Weighted_Median_Kernels[index - 1]->weights = PushArray(Working_Set, f32*, 1 << (index - 1));
+                ForLoop2(1 << (index - 1))
+                {
+                    MipMap_Weighted_Median_Kernels[index - 1]->weights[index2] = PushArray(Working_Set, f32, (1 << (index - 1)) - index2);
+                }
             }
         }
     }
+
+    contrast_task *contrastTasks = PushArray(Working_Set, contrast_task, Number_of_LODs);
 
     ForLoop(Number_of_MapQ_Layers)
     {
@@ -2756,24 +2770,60 @@ MainArgs
             PrintStatus("Processing MAPQ layer %d/%d (MAPQ >= %d, %$llu read-pairs)", index + 1, Number_of_MapQ_Layers, layer->threshold, (unsigned long long)layer->totalGoodReads);
         }
 
-        ForLoop2(Number_of_LODs)
+        if (Norm_Mode == Norm_VCSqrt)
         {
-            if (index2)
+            PrintStatus("Building raw-count sum levels...");
+            for (u32 level = 1; level < Number_of_LODs; ++level)
             {
-                ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + index2));
+                u32 pixels = Pixel_Resolution(Max_Image_Depth - level);
+                for (u32 worker = 0; worker < sumWorkerCount; ++worker)
+                {
+                    sumTasks[worker].sourceImage = (u16 **)Images[level - 1];
+                    sumTasks[worker].image = (u16 **)Images[level];
+                    sumTasks[worker].pixels = pixels;
+                    sumTasks[worker].rowStart = pixels * worker / sumWorkerCount;
+                    sumTasks[worker].rowEnd = pixels * (worker + 1) / sumWorkerCount;
+                    ThreadPoolAddTask(Thread_Pool, lod_find_max_sum, &sumTasks[worker]);
+                }
+                ThreadPoolWait(Thread_Pool);
+
+                u64 maxSum = 0;
+                for (u32 worker = 0; worker < sumWorkerCount; ++worker)
+                {
+                    if (sumTasks[worker].maxSum > maxSum) maxSum = sumTasks[worker].maxSum;
+                }
+
+                f64 scale = maxSum > u16_max ? (f64)u16_max / (f64)maxSum : 1.0;
+                for (u32 worker = 0; worker < sumWorkerCount; ++worker)
+                {
+                    sumTasks[worker].scale = scale;
+                    ThreadPoolAddTask(Thread_Pool, lod_sum_level, &sumTasks[worker]);
+                }
+                ThreadPoolWait(Thread_Pool);
             }
         }
-
-        PrintStatus("Creating MipMaps...");
-        ThreadPoolWait(Thread_Pool);
+        else
+        {
+            ForLoop2(Number_of_LODs)
+            {
+                if (index2)
+                {
+                    ThreadPoolAddTask(Thread_Pool, CreateMipMap, (void *)(mipMapLevels + index2));
+                }
+            }
+            PrintStatus("Creating MipMaps...");
+            ThreadPoolWait(Thread_Pool);
+        }
 
         ForLoop2(Number_of_LODs)
         {
-            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(mipMapLevels + index2));
+            contrastTasks[index2].lodIndex = mipMapLevels[index2];
+            contrastTasks[index2].normMode = Norm_Mode;
+            ThreadPoolAddTask(Thread_Pool, ContrastEqualisation, (void *)(contrastTasks + index2));
         }
-        PrintStatus("Equalising contrast...");
+        PrintStatus("Equalising contrast (%s)...", NormModeName());
         ThreadPoolWait(Thread_Pool);
-        
+
         CreateDXTTextures();
         PrintStatus("Compressing textures...");
         ThreadPoolWait(Thread_Pool);

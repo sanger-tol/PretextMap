@@ -37,9 +37,11 @@ Or pipe directly from an aligner e.g. bwa mem ... | PretextMap<br/>
 * --sortby sorts contigs by length, name or nosort (default: length)<br/>
 * --sortorder ascend or descend (default: descend, no effect if sortby = nosort)<br/>
 * --mapq sets a minimum mapping quality filter (default: 0)<br/>
+* --min-dist filters out read pairs on the same contig whose mapping positions differ by less than this many base pairs (default: 0, disabled). Pairs on different contigs are unaffected.<br/>
 * --mapqLayers comma-separated MAPQ layer thresholds (default: 0,10). Each threshold produces a contact-map layer including read pairs with MAPQ ≥ that value<br/>
 * --highRes high resolution output (requires PretextView >=0.2.5)<br/>
 * --ultraRes ultra resolution output for maximum detail (requires 40GB RAM)<br/>
+* --norm {kl, vcsqrt}: contact normalisation before the square-root fold. `kl` (default) is the original row-maximum equalisation on weighted-median mipmaps. `vcsqrt` builds coarser levels by raw-count 2×2 sums, then applies coverage weights `1/sqrt(coverage)` (bins with no contacts get weight 0).<br/>
 
 By default PretextMap writes two MAPQ layers (0 and 10). No `--mapq` or `--mapqLayers` flags are needed for that case:<br/>
 ```sh
@@ -54,6 +56,11 @@ Custom sorting example:<br/>
 Custom MAPQ layers example:<br/>
 ```sh
 > samtools view -h file.bam | PretextMap -o map.pretext --mapqLayers "0,10,20,30"
+```
+
+VCSqrt normalisation example:<br/>
+```sh
+> samtools view -h file.bam | PretextMap -o map.pretext --norm vcsqrt
 ```
 
 Ultra resolution example (for large Hi-C datasets):<br/>
